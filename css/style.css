@@ -299,6 +299,99 @@ hr.sep {
 .world-block .wrow input { width: 65px; }
 .world-block .wrow span  { color: var(--text-dim); font-size: 11px; }
 
+/* ── LEFT PANEL RESTRUCTURE ── */
+#layer-section {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+/* GROUP TABS */
+#group-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  flex-shrink: 0;
+  max-height: 130px;
+  overflow-y: auto;
+}
+#group-tabs:empty { display: none; }
+
+.group-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg-item);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.group-tab.active  { border-color: var(--gold); background: rgba(245,166,35,0.08); }
+.group-tab:hover:not(.active) { background: var(--bg-hover); }
+.group-tab.faded   { opacity: 0.45; }
+
+.gt-vis {
+  background: none; border: none;
+  padding: 0; font-size: 12px;
+  line-height: 1; cursor: pointer;
+  flex-shrink: 0; width: 18px; text-align: center;
+}
+.gt-vis:hover { background: none; }
+.gt-name {
+  flex: 1; min-width: 0;
+  font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text); outline: none; background: transparent; border: none;
+}
+.gt-name:focus {
+  white-space: normal;
+  background: var(--bg-hover);
+  padding: 1px 4px; border-radius: 3px;
+}
+.gt-del { padding: 1px 5px; font-size: 11px; flex-shrink: 0; }
+
+/* CHECKPOINTS */
+.checkpoint-block { display: flex; flex-direction: column; gap: 4px; }
+.checkpoint-block > button { width: 100%; text-align: left; font-size: 12px; }
+
+#cp-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
+.cp-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-item);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 5px;
+}
+.cp-name-edit {
+  flex: 1; min-width: 0;
+  font-size: 11px; color: var(--text);
+  outline: none; background: transparent; border: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cp-name-edit:focus {
+  white-space: normal;
+  background: var(--bg-hover);
+  padding: 1px 4px; border-radius: 3px;
+}
+.cp-go-btn, .cp-del-btn { padding: 1px 5px; font-size: 11px; flex-shrink: 0; }
+.cp-go-btn  { border-color: var(--gold); color: var(--gold); }
+.cp-go-btn:hover { background: var(--gold); color: #000; }
+
 /* Status toast */
 #toast {
   position: fixed;

@@ -1,19 +1,24 @@
 /**
  * DnD Fog of War – Player / Projector View
- * js/player.js
+ * js/player.js  (v3 – Layer Groups)
  */
 (function () {
   'use strict';
 
-  let canvas, ctx;
+  var canvas, ctx;
 
-  const P = {
-    world:  { w: 1920, h: 1080 },
-    vp:     { x: 0, y: 0, zoom: 1 },
-    layers: [],
-    fogImg: null,
-    ready:  false,
+  var P = {
+    world:         { w: 1920, h: 1080 },
+    vp:            { x: 0, y: 0, zoom: 1 },
+    groups:        [],   // { id, visible, layers:[], fogImg:null }
+    activeGroupId: null,
+    ready:         false,
   };
+
+  function activeGroup() {
+    if (!P.groups.length) return null;
+    return P.groups.find(function (g) { return g.id === P.activeGroupId; }) || P.groups[0];
+  }
 
   function init() {
     canvas = document.getElementById('player-canvas');
@@ -22,18 +27,15 @@
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // Connect to DM via BroadcastChannel
-    const bc = new BroadcastChannel('dnd-fog');
-    bc.onmessage = e => {
-      const { type, payload } = e.data;
-      switch (type) {
-        case 'FULL_STATE':  applyFullState(payload);  break;
-        case 'FOG_UPDATE':  applyFogUpdate(payload);  break;
-        case 'VP_UPDATE':   P.vp = { ...payload.vp }; break;
-      }
+    var bc = new BroadcastChannel('dnd-fog');
+    bc.onmessage = function (e) {
+      var type    = e.data.type;
+      var payload = e.data.payload;
+      if (type === 'FULL_STATE')  { applyFullState(payload); }
+      else if (type === 'FOG_UPDATE') { applyFogUpdate(payload); }
+      else if (type === 'VP_UPDATE')  { P.vp.x = payload.vp.x; P.vp.y = payload.vp.y; P.vp.zoom = payload.vp.zoom; }
     };
 
-    // Announce presence so DM sends us the current state
     bc.postMessage({ type: 'PLAYER_HELLO' });
 
     requestAnimationFrame(renderLoop);
@@ -47,52 +49,112 @@
   // ─── State application ────────────────────────────────────────────────────
 
   function applyFullState(payload) {
-    P.world = { ...payload.world };
-    P.vp    = { ...payload.vp };
+    P.world.w     = payload.world.w;
+    P.world.h     = payload.world.h;
+    P.vp.x        = payload.vp.x;
+    P.vp.y        = payload.vp.y;
+    P.vp.zoom     = payload.vp.zoom;
+    P.activeGroupId = payload.activeGroupId;
 
-    applyFogUpdate({ fogURL: payload.fogURL });
+    // Preserve existing fogImg for any group that hasn't changed
+    var existingGroups = {};
+    P.groups.forEach(function (g) { existingGroups[g.id] = g; });
 
-    P.layers = new Array(payload.layers.length).fill(null);
-    let loaded = 0;
-    const total = payload.layers.length;
+    var groupDTOs = payload.groups || [];
 
-    function onLayerLoaded() {
-      loaded++;
-      if (loaded === total) { P.ready = true; hideWaiting(); }
+    if (groupDTOs.length === 0) {
+      P.groups = [];
+      P.ready  = true;
+      hideWaiting();
+      return;
     }
 
-    payload.layers.forEach((dto, idx) => {
-      const img = new Image();
-      img.onload = () => {
-        P.layers[idx] = {
-          img,
-          x: dto.x, y: dto.y,
-          w: dto.w, h: dto.h,
-          sx: dto.sx, sy: dto.sy,
-          opacity: dto.opacity,
-          visible: dto.visible,
-        };
-        onLayerLoaded();
+    // Build new groups array; carry over cached fogImg where possible
+    P.groups = groupDTOs.map(function (gdto) {
+      var prev = existingGroups[gdto.id] || {};
+      return {
+        id:      gdto.id,
+        visible: gdto.visible !== false,
+        fogImg:  prev.fogImg || null,
+        layers:  [],
       };
-      img.onerror = () => {
-        console.warn(`Player view: failed to load image for layer index ${idx}`);
-        onLayerLoaded();
-      };
-      img.src = dto.dataURL;
     });
 
-    if (total === 0) { P.ready = true; hideWaiting(); }
+    // Re-load fog for every group from the DTO
+    groupDTOs.forEach(function (gdto, gi) {
+      if (gdto.fogURL) {
+        var fi = new Image();
+        fi.onload = (function (groupIdx) {
+          return function () { P.groups[groupIdx].fogImg = this; };
+        }(gi));
+        fi.src = gdto.fogURL;
+      }
+    });
+
+    // Load layers for all groups concurrently
+    var totalLayers = groupDTOs.reduce(function (sum, g) { return sum + (g.layers ? g.layers.length : 0); }, 0);
+    if (totalLayers === 0) {
+      P.ready = true;
+      hideWaiting();
+      return;
+    }
+
+    var loadedLayers = 0;
+
+    groupDTOs.forEach(function (gdto, gi) {
+      var dtos = gdto.layers || [];
+      if (dtos.length === 0) return;
+
+      P.groups[gi].layers = new Array(dtos.length).fill(null);
+
+      dtos.forEach(function (dto, idx) {
+        var img = new Image();
+        img.onload = (function (d, i, groupIdx) {
+          return function () {
+            P.groups[groupIdx].layers[i] = {
+              img:     this,
+              x: d.x, y: d.y,
+              w: d.w, h: d.h,
+              sx: d.sx, sy: d.sy,
+              opacity: d.opacity,
+              visible: d.visible,
+            };
+            loadedLayers++;
+            if (loadedLayers === totalLayers) {
+              P.groups.forEach(function (g) { g.layers = g.layers.filter(Boolean); });
+              P.ready = true;
+              hideWaiting();
+            }
+          };
+        }(dto, idx, gi));
+        img.onerror = (function (d) {
+          return function () {
+            console.warn('Player: failed to load layer "' + d.name + '"');
+            loadedLayers++;
+            if (loadedLayers === totalLayers) {
+              P.groups.forEach(function (g) { g.layers = g.layers.filter(Boolean); });
+              P.ready = true;
+              hideWaiting();
+            }
+          };
+        }(dto));
+        img.src = dto.dataURL;
+      });
+    });
   }
 
   function applyFogUpdate(payload) {
-    if (!payload.fogURL) return;
-    const img  = new Image();
-    img.onload = () => { P.fogImg = img; };
-    img.src    = payload.fogURL;
+    if (!payload.fogURL || !payload.groupId) return;
+    var g = P.groups.find(function (x) { return x.id === payload.groupId; });
+    if (!g) return;
+    var img   = new Image();
+    var group = g;
+    img.onload = function () { group.fogImg = this; };
+    img.src = payload.fogURL;
   }
 
   function hideWaiting() {
-    const w = document.getElementById('waiting');
+    var w = document.getElementById('waiting');
     if (w) w.style.display = 'none';
   }
 
@@ -105,27 +167,29 @@
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    var g = activeGroup();
+    if (!g) return;
+
     ctx.save();
     ctx.translate(P.vp.x, P.vp.y);
     ctx.scale(P.vp.zoom, P.vp.zoom);
 
-    // World background
     ctx.fillStyle = '#0d0d1e';
     ctx.fillRect(0, 0, P.world.w, P.world.h);
 
     // Layers – bottom to top
-    for (let i = P.layers.length - 1; i >= 0; i--) {
-      const l = P.layers[i];
-      if (!l || !l.visible || !l.img.complete) continue;
+    for (var i = g.layers.length - 1; i >= 0; i--) {
+      var l = g.layers[i];
+      if (!l || !l.visible || !l.img || !l.img.complete) continue;
       ctx.save();
       ctx.globalAlpha = l.opacity;
       ctx.drawImage(l.img, l.x, l.y, l.w * l.sx, l.h * l.sy);
       ctx.restore();
     }
 
-    // Fog – fully opaque for players
-    if (P.fogImg) {
-      ctx.drawImage(P.fogImg, 0, 0);
+    // Fog – fully opaque so players cannot see unrevealed areas
+    if (g.fogImg) {
+      ctx.drawImage(g.fogImg, 0, 0);
     } else {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, P.world.w, P.world.h);
