@@ -38,7 +38,17 @@
     <div id="layer-section">
       <div class="panel-title">
         <h2>Layers</h2>
-        <button id="btn-add-layer" title="Import image(s) as new layer(s)">+ Add</button>
+        <div class="layer-add-btns">
+          <button id="btn-add-layer" title="Import image(s) as new layer(s)">+ Add</button>
+          <details class="sample-picker" title="Insert a built-in sample map">
+            <summary>🗺</summary>
+            <ul class="sample-menu">
+              <li data-sample="dungeon_room">🏰 Dungeon Room</li>
+              <li data-sample="forest">🌲 Forest Clearing</li>
+              <li data-sample="tavern">🍺 Tavern</li>
+            </ul>
+          </details>
+        </div>
       </div>
       <ul id="layer-list">
         <li class="empty-hint">No layers yet.<br>Click <b>+ Add</b> or drop images onto the canvas.</li>
@@ -49,6 +59,12 @@
   <!-- CENTRE: Canvas -->
   <div id="canvas-wrap">
     <canvas id="main-canvas"></canvas>
+    <!-- Fog session staging bar – shown while the DM has unsent fog strokes -->
+    <div id="fog-session-bar">
+      <span class="fsp-label">🎨 Unsent fog changes</span>
+      <button id="btn-fog-commit" title="Apply fog changes and send to players (Enter)">✓ Send to players</button>
+      <button id="btn-fog-revert" title="Discard fog changes and revert (Esc)">✗ Revert</button>
+    </div>
   </div>
 
   <!-- RIGHT: Tools Panel -->

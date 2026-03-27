@@ -392,6 +392,90 @@ hr.sep {
 .cp-go-btn  { border-color: var(--gold); color: var(--gold); }
 .cp-go-btn:hover { background: var(--gold); color: #000; }
 
+/* ── LAYER PANEL ADD BUTTONS ── */
+.layer-add-btns {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* SAMPLE PICKER (<details> dropdown) */
+.sample-picker {
+  position: relative;
+}
+.sample-picker summary {
+  cursor: pointer;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font-size: 13px;
+  list-style: none;
+  user-select: none;
+}
+.sample-picker summary::-webkit-details-marker { display: none; }
+.sample-picker summary:hover { background: var(--accent); border-color: var(--accent); }
+.sample-picker[open] summary { background: var(--accent); border-color: var(--accent); }
+
+.sample-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  list-style: none;
+  min-width: 150px;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.sample-menu li {
+  padding: 7px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text);
+  transition: background 0.1s;
+}
+.sample-menu li:hover { background: var(--bg-hover); }
+
+/* FOG SESSION BAR */
+#fog-session-bar {
+  display: none;
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 14, 30, 0.95);
+  border: 1.5px solid var(--gold);
+  border-radius: 7px;
+  padding: 7px 12px;
+  gap: 10px;
+  align-items: center;
+  z-index: 20;
+  box-shadow: 0 3px 14px rgba(0,0,0,0.6);
+  pointer-events: all;
+}
+#fog-session-bar.active { display: flex; }
+
+.fsp-label {
+  font-size: 12px;
+  color: var(--gold);
+  white-space: nowrap;
+}
+#btn-fog-commit {
+  border-color: #4caf50;
+  color: #4caf50;
+  padding: 5px 12px;
+}
+#btn-fog-commit:hover { background: #4caf50; color: #000; border-color: #4caf50; }
+#btn-fog-revert {
+  border-color: #e94560;
+  color: #e94560;
+  padding: 5px 12px;
+}
+#btn-fog-revert:hover { background: #e94560; color: #fff; border-color: #e94560; }
+
 /* Status toast */
 #toast {
   position: fixed;

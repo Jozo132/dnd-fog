@@ -12,6 +12,7 @@
     groups: [],           // array of { id, name, visible, fog:{canvas,ctx}, layers[] }
     activeGroupId: null,  // id of the group currently being edited / shown to players
     checkpoints: [],      // array of { id, name, vp:{x,y,zoom} }
+    fogSession: { active: false, snapshot: null, groupId: null }, // staged fog painting
     vp: { x: 0, y: 0, zoom: 1 },
     world: { w: 1920, h: 1080 },
     tool: 'reveal',       // reveal | hide | pan | transform
@@ -102,6 +103,7 @@
   }
 
   function switchGroup(id) {
+    if (S.fogSession.active) commitFogSession();
     S.activeGroupId = id;
     S.selectedId    = null;
     rebuildGroupTabs();
@@ -199,6 +201,7 @@
   }
 
   function revealAll() {
+    if (S.fogSession.active) commitFogSession();
     const fc = ag().fog.ctx;
     fc.save();
     fc.globalCompositeOperation = 'destination-out';
@@ -208,6 +211,7 @@
   }
 
   function hideAll() {
+    if (S.fogSession.active) commitFogSession();
     const fc = ag().fog.ctx;
     fc.save();
     fc.globalCompositeOperation = 'source-over';
@@ -220,6 +224,57 @@
   function afterFogChange() {
     broadcastFog();
     scheduleSave();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FOG SESSION (staged painting – strokes are visible to DM but not broadcast
+  // to players until the DM explicitly commits them)
+  // ─────────────────────────────────────────────────────────────────────────
+  function startFogSession() {
+    if (S.fogSession.active) return;
+    var g = ag();
+    if (!g) return;
+    var snap = document.createElement('canvas');
+    snap.width  = g.fog.canvas.width;
+    snap.height = g.fog.canvas.height;
+    snap.getContext('2d').drawImage(g.fog.canvas, 0, 0);
+    S.fogSession.active   = true;
+    S.fogSession.snapshot = snap;
+    S.fogSession.groupId  = g.id;
+    showFogSessionBar();
+  }
+
+  function commitFogSession() {
+    if (!S.fogSession.active) return;
+    S.fogSession.active   = false;
+    S.fogSession.snapshot = null;
+    S.fogSession.groupId  = null;
+    hideFogSessionBar();
+    broadcastFog();
+    scheduleSave();
+  }
+
+  function revertFogSession() {
+    if (!S.fogSession.active) return;
+    var g = S.groups.find(function (x) { return x.id === S.fogSession.groupId; });
+    if (g && S.fogSession.snapshot) {
+      g.fog.ctx.clearRect(0, 0, g.fog.canvas.width, g.fog.canvas.height);
+      g.fog.ctx.drawImage(S.fogSession.snapshot, 0, 0);
+    }
+    S.fogSession.active   = false;
+    S.fogSession.snapshot = null;
+    S.fogSession.groupId  = null;
+    hideFogSessionBar();
+  }
+
+  function showFogSessionBar() {
+    var bar = document.getElementById('fog-session-bar');
+    if (bar) bar.classList.add('active');
+  }
+
+  function hideFogSessionBar() {
+    var bar = document.getElementById('fog-session-bar');
+    if (bar) bar.classList.remove('active');
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -425,6 +480,7 @@
     }
 
     if (S.tool === 'reveal' || S.tool === 'hide') {
+      startFogSession();   // snapshot before first stroke of this session
       S.isDrawing = true;
       S.lastFogPt = w;
       applyFog(w.x, w.y, S.tool);
@@ -459,7 +515,7 @@
     if (S.isDrawing && (S.tool === 'reveal' || S.tool === 'hide')) {
       if (S.lastFogPt) interpolateFog(S.lastFogPt.x, S.lastFogPt.y, w.x, w.y, S.tool);
       S.lastFogPt = w;
-      throttleBroadcastFog();
+      // Do NOT broadcast during a session – player sees changes only after commit
       return;
     }
 
@@ -475,14 +531,13 @@
   }
 
   function onMouseUp() {
-    const wasDraw = S.isDrawing;
     const wasDrag = S.isDraggingLayer;
     S.isDrawing       = false;
     S.isPanning       = false;
     S.isDraggingLayer = false;
     S.lastFogPt       = null;
     updateCursor();
-    if (wasDraw) { broadcastFog();  scheduleSave(); }
+    // Fog changes are held in session until the DM clicks "Send to players"
     if (wasDrag) { broadcastFull(); scheduleSave(); }
   }
 
@@ -765,6 +820,293 @@
       };
       reader.readAsDataURL(file);
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SAMPLE MAP GENERATORS
+  // Procedurally draw built-in placeholder maps at 960×540 and add as layers.
+  // ─────────────────────────────────────────────────────────────────────────
+  var SAMPLE_MAPS = {
+    dungeon_room: { label: 'Dungeon Room', fn: drawSampleDungeon  },
+    forest:       { label: 'Forest Clearing', fn: drawSampleForest },
+    tavern:       { label: 'Tavern',          fn: drawSampleTavern },
+  };
+
+  function addSampleLayer(type) {
+    var sample = SAMPLE_MAPS[type];
+    if (!sample) return;
+    var c = document.createElement('canvas');
+    c.width = 960; c.height = 540;
+    sample.fn(c.getContext('2d'), c.width, c.height);
+    var dataURL = c.toDataURL('image/png');
+    var img = new Image();
+    img.onload = function () {
+      var layer = makeLayer(sample.label, dataURL, img);
+      if (ag().layers.length === 0) {
+        layer.sx = S.world.w / layer.w;
+        layer.sy = S.world.h / layer.h;
+      }
+      addLayer(layer);
+      toast('Sample "' + sample.label + '" added');
+    };
+    img.src = dataURL;
+  }
+
+  // ── Dungeon Room ────────────────────────────────────────────────────────────
+  function drawSampleDungeon(ctx, W, H) {
+    // Background (dark stone)
+    ctx.fillStyle = '#181520';
+    ctx.fillRect(0, 0, W, H);
+
+    // Stone tile grid on background
+    ctx.strokeStyle = '#0e0c14';
+    ctx.lineWidth = 1;
+    var ts = 48;
+    for (var x = 0; x <= W; x += ts) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (var y = 0; y <= H; y += ts) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+    // Room floor
+    var rx = 160, ry = 90, rw = W - 320, rh = H - 180;
+    ctx.fillStyle = '#3c2e1c';
+    ctx.fillRect(rx, ry, rw, rh);
+
+    // Floor tile grid inside room
+    ctx.strokeStyle = '#2a2010';
+    ctx.lineWidth = 1;
+    for (var x = rx; x <= rx + rw; x += ts) { ctx.beginPath(); ctx.moveTo(x, ry); ctx.lineTo(x, ry + rh); ctx.stroke(); }
+    for (var y = ry; y <= ry + rh; y += ts) { ctx.beginPath(); ctx.moveTo(rx, y); ctx.lineTo(rx + rw, y); ctx.stroke(); }
+
+    // Walls
+    var wt = 28;
+    ctx.fillStyle = '#100e18';
+    ctx.fillRect(rx - wt, ry - wt, rw + wt * 2, wt);       // top
+    ctx.fillRect(rx - wt, ry + rh, rw + wt * 2, wt);       // bottom
+    ctx.fillRect(rx - wt, ry, wt, rh);                      // left
+    ctx.fillRect(rx + rw, ry, wt, rh);                      // right
+
+    // Wall detail: crack marks
+    ctx.strokeStyle = '#1e1a28';
+    ctx.lineWidth = 1;
+    function crack(x1, y1, x2, y2) { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+    crack(rx - wt + 5, ry - wt + 8, rx - wt + 12, ry - 2);
+    crack(rx + rw + 8, ry + 40, rx + rw + 20, ry + 55);
+    crack(rx + rw * 0.3, ry - wt + 3, rx + rw * 0.32, ry - 1);
+    crack(rx - wt + 5, ry + rh + 14, rx - wt + 14, ry + rh + wt - 2);
+
+    // Door openings
+    var dw = 56;
+    ctx.fillStyle = '#3c2e1c';
+    ctx.fillRect(rx + rw / 2 - dw / 2, ry - wt, dw, wt);         // top
+    ctx.fillRect(rx + rw / 2 - dw / 2, ry + rh, dw, wt);         // bottom
+    ctx.fillRect(rx - wt, ry + rh / 2 - dw / 2, wt, dw);         // left
+    ctx.fillRect(rx + rw, ry + rh / 2 - dw / 2, wt, dw);         // right
+
+    // Pillars at inner corners
+    var pr = 13;
+    [[rx + 55, ry + 50], [rx + rw - 55, ry + 50],
+     [rx + 55, ry + rh - 50], [rx + rw - 55, ry + rh - 50]].forEach(function (p) {
+      ctx.fillStyle = '#100e18';
+      ctx.beginPath(); ctx.arc(p[0], p[1], pr, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#3c2e1c'; ctx.lineWidth = 2; ctx.stroke();
+    });
+
+    // Room border highlight
+    ctx.strokeStyle = '#5a4830';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rx, ry, rw, rh);
+
+    // Vignette
+    var vig = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, W * 0.6);
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // ── Forest Clearing ─────────────────────────────────────────────────────────
+  function drawSampleForest(ctx, W, H) {
+    // Base ground
+    ctx.fillStyle = '#2a4a1a';
+    ctx.fillRect(0, 0, W, H);
+
+    // Grass variation patches; deterministic LCG so the map looks the same every time
+    var seed = 0;
+    // nextSeed: Linear Congruential Generator – glibc constants, gives repeatable results
+    function nextSeed() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed; }
+    for (var gi = 0; gi < 600; gi++) {
+      nextSeed(); var px = nextSeed() % W;
+      nextSeed(); var py = nextSeed() % H;
+      var pr2 = 15 + (nextSeed() % 35);
+      var dark = (nextSeed() % 2 === 0);
+      ctx.fillStyle = dark ? 'rgba(20,40,10,0.3)' : 'rgba(60,100,30,0.25)';
+      ctx.beginPath(); ctx.arc(px, py, pr2, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Central clearing (lighter open area)
+    var cx = W / 2, cy = H / 2, clearR = 185;
+    var cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, clearR);
+    cg.addColorStop(0, '#5a8c38');
+    cg.addColorStop(0.65, '#3a6428');
+    cg.addColorStop(1, 'rgba(42,74,26,0)');
+    ctx.fillStyle = cg;
+    ctx.beginPath(); ctx.arc(cx, cy, clearR, 0, Math.PI * 2); ctx.fill();
+
+    // Dirt path (left→right)
+    ctx.save();
+    ctx.strokeStyle = '#7a6038';
+    ctx.lineWidth = 22;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, H * 0.5);
+    ctx.bezierCurveTo(W * 0.22, H * 0.46, W * 0.38, H * 0.52, cx, cy);
+    ctx.bezierCurveTo(W * 0.62, H * 0.48, W * 0.78, H * 0.46, W, H * 0.44);
+    ctx.stroke();
+    ctx.strokeStyle = '#9a7848';
+    ctx.lineWidth = 10;
+    ctx.stroke();
+    ctx.restore();
+
+    // Trees (placed around the clearing edge)
+    var treeData = [];
+    for (var ti = 0; ti < 55; ti++) {
+      var ang = (ti / 55) * Math.PI * 2 + (nextSeed() % 100) / 500;
+      var dist = clearR + 35 + (nextSeed() % 140);
+      var tx = cx + Math.cos(ang) * dist;
+      var ty = cy + Math.sin(ang) * dist * 0.72;
+      if (tx < 12 || tx > W - 12 || ty < 12 || ty > H - 12) continue;
+      treeData.push([tx, ty, 13 + (nextSeed() % 11)]);
+    }
+    // Sort by y for depth
+    treeData.sort(function (a, b) { return a[1] - b[1]; });
+    treeData.forEach(function (t) {
+      var tx = t[0], ty = t[1], tr = t[2];
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath(); ctx.ellipse(tx + 3, ty + tr * 0.55, tr * 0.85, tr * 0.32, 0, 0, Math.PI * 2); ctx.fill();
+      // Trunk
+      ctx.fillStyle = '#5a3e20';
+      ctx.fillRect(tx - 3, ty, 6, tr * 0.55);
+      // Canopy
+      var tcg = ctx.createRadialGradient(tx, ty - tr * 0.35, 0, tx, ty - tr * 0.35, tr * 1.15);
+      tcg.addColorStop(0, '#4a8c28');
+      tcg.addColorStop(0.55, '#2a5c18');
+      tcg.addColorStop(1, '#1a3c0e');
+      ctx.fillStyle = tcg;
+      ctx.beginPath(); ctx.arc(tx, ty - tr * 0.35, tr * 1.1, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // Campfire at clearing centre
+    ctx.fillStyle = '#5a3010';
+    ctx.beginPath(); ctx.arc(cx, cy + 10, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#cc4400';
+    ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffaa00';
+    ctx.beginPath(); ctx.arc(cx, cy - 4, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffee88';
+    ctx.beginPath(); ctx.arc(cx, cy - 7, 3, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ── Tavern ──────────────────────────────────────────────────────────────────
+  function drawSampleTavern(ctx, W, H) {
+    // Wooden plank floor
+    var plankH = 38;
+    for (var py = 0; py < H; py += plankH) {
+      var row = Math.floor(py / plankH);
+      ctx.fillStyle = row % 2 === 0 ? '#6b4420' : '#7a5030';
+      ctx.fillRect(0, py, W, plankH);
+      // Separator line
+      ctx.strokeStyle = '#3a2008';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke();
+      // Vertical grain (deterministic)
+      ctx.strokeStyle = 'rgba(30,12,0,0.15)';
+      for (var gi = 0; gi < 7; gi++) {
+        var gx = (gi * 141 + row * 53) % W;
+        ctx.beginPath(); ctx.moveTo(gx, py); ctx.lineTo(gx + (gi % 3) - 1, py + plankH); ctx.stroke();
+      }
+    }
+
+    // Bar counter (left side)
+    ctx.fillStyle = '#2a1006';
+    ctx.fillRect(0, 60, 150, H - 120);
+    ctx.fillStyle = '#4a2c10';
+    ctx.fillRect(0, 60, 150, 18);          // counter top edge
+    ctx.fillStyle = '#3a1a08';
+    ctx.fillRect(130, 60, 4, H - 120);    // counter front edge
+    ctx.fillStyle = '#5a3418';
+    for (var sy = 90; sy < H - 120; sy += 40) {
+      ctx.fillRect(10, sy, 110, 24);       // shelf / bottle rows
+    }
+
+    // Bar stools
+    for (var si = 0; si < 6; si++) {
+      var stoolY = 110 + si * Math.floor((H - 220) / 6) + 20;
+      ctx.fillStyle = '#8b5e32';
+      ctx.beginPath(); ctx.arc(178, stoolY, 14, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#4a2e10'; ctx.lineWidth = 2; ctx.stroke();
+    }
+
+    // Tables with chairs
+    var tables = [
+      [W * 0.44, H * 0.28], [W * 0.70, H * 0.28],
+      [W * 0.44, H * 0.68], [W * 0.70, H * 0.68],
+    ];
+    tables.forEach(function (t) {
+      var tx = t[0], ty = t[1];
+      // Table surface
+      ctx.fillStyle = '#5a3a18';
+      ctx.fillRect(tx - 52, ty - 34, 104, 68);
+      ctx.strokeStyle = '#2a1006'; ctx.lineWidth = 2;
+      ctx.strokeRect(tx - 52, ty - 34, 104, 68);
+      // Wood grain on table
+      ctx.strokeStyle = 'rgba(30,10,0,0.2)';
+      ctx.lineWidth = 1;
+      for (var gi = 0; gi < 4; gi++) {
+        ctx.beginPath();
+        ctx.moveTo(tx - 52 + gi * 26, ty - 34);
+        ctx.lineTo(tx - 50 + gi * 26, ty + 34);
+        ctx.stroke();
+      }
+      // Chairs (4 sides)
+      [[0, -52], [0, 52], [-66, 0], [66, 0]].forEach(function (o) {
+        ctx.fillStyle = '#7a5028';
+        ctx.beginPath(); ctx.arc(tx + o[0], ty + o[1], 13, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#2a1006'; ctx.lineWidth = 1.5; ctx.stroke();
+      });
+      // Tankard / mug on table
+      ctx.fillStyle = '#c0902a';
+      ctx.fillRect(tx - 8, ty - 12, 16, 20);
+      ctx.strokeStyle = '#8a6010'; ctx.lineWidth = 1; ctx.strokeRect(tx - 8, ty - 12, 16, 20);
+    });
+
+    // Fireplace (right wall)
+    ctx.fillStyle = '#1a0e06';
+    ctx.fillRect(W - 110, 70, 100, 140);
+    ctx.fillStyle = '#8b5e20';
+    ctx.fillRect(W - 100, 70, 80, 14);   // mantle
+    ctx.fillStyle = '#381808';
+    ctx.fillRect(W - 96, 90, 72, 110);   // hearth opening
+    // Fire glow
+    var fireGrad = ctx.createRadialGradient(W - 60, 170, 0, W - 60, 170, 50);
+    fireGrad.addColorStop(0, 'rgba(255,200,50,0.9)');
+    fireGrad.addColorStop(0.4, 'rgba(220,80,10,0.6)');
+    fireGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = fireGrad;
+    ctx.fillRect(W - 110, 90, 100, 140);
+    // Flames
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath(); ctx.moveTo(W - 72, 180); ctx.bezierCurveTo(W - 85, 155, W - 85, 130, W - 60, 100); ctx.bezierCurveTo(W - 35, 130, W - 35, 155, W - 48, 180); ctx.fill();
+    ctx.fillStyle = '#ffcc00';
+    ctx.beginPath(); ctx.arc(W - 60, 148, 14, 0, Math.PI * 2); ctx.fill();
+
+    // Door (bottom centre)
+    ctx.fillStyle = '#2a1206';
+    ctx.fillRect(W / 2 - 35, H - 50, 70, 50);
+    ctx.strokeStyle = '#8b5e20'; ctx.lineWidth = 2;
+    ctx.strokeRect(W / 2 - 35, H - 50, 70, 50);
+    // Door handle
+    ctx.fillStyle = '#c0a030';
+    ctx.beginPath(); ctx.arc(W / 2 + 20, H - 25, 5, 0, Math.PI * 2); ctx.fill();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1100,6 +1442,11 @@
       }
       document.getElementById('world-w').value = w;
       document.getElementById('world-h').value = h;
+      // Discard any in-progress fog session (state no longer applies after reload)
+      S.fogSession.active = false;
+      S.fogSession.snapshot = null;
+      S.fogSession.groupId  = null;
+      hideFogSessionBar();
       rebuildGroupTabs();
       rebuildLayerPanel();
       rebuildCheckpointPanel();
@@ -1110,6 +1457,11 @@
 
   function clearScenario() {
     if (!confirm('Clear all groups, layers, checkpoints and reset fog? This cannot be undone.')) return;
+    // Discard fog session before clearing
+    S.fogSession.active = false;
+    S.fogSession.snapshot = null;
+    S.fogSession.groupId  = null;
+    hideFogSessionBar();
     var dg        = makeGroup('Surface');
     S.groups        = [dg];
     S.activeGroupId = dg.id;
@@ -1204,6 +1556,18 @@
     document.getElementById('btn-add-group').addEventListener('click', addGroup);
     document.getElementById('btn-add-layer').addEventListener('click', function () { document.getElementById('file-img').click(); });
 
+    // Sample map picker – close details on selection
+    document.querySelectorAll('.sample-menu li').forEach(function (li) {
+      li.addEventListener('click', function () {
+        addSampleLayer(li.dataset.sample);
+        li.closest('details').removeAttribute('open');
+      });
+    });
+
+    // Fog session bar buttons
+    document.getElementById('btn-fog-commit').addEventListener('click', commitFogSession);
+    document.getElementById('btn-fog-revert').addEventListener('click', revertFogSession);
+
     document.querySelectorAll('.tool-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
         document.querySelectorAll('.tool-btn').forEach(function (b) { b.classList.remove('active'); });
@@ -1233,6 +1597,11 @@
 
     window.addEventListener('keydown', function (e) {
       if (e.target.isContentEditable || e.target.tagName === 'INPUT') return;
+      // Fog session shortcuts
+      if (S.fogSession.active) {
+        if (e.key === 'Enter') { e.preventDefault(); commitFogSession(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); revertFogSession(); return; }
+      }
       var map = { r: 'reveal', h: 'hide', p: 'pan', t: 'transform' };
       if (map[e.key.toLowerCase()]) {
         document.querySelectorAll('.tool-btn').forEach(function (b) { b.classList.remove('active'); });
