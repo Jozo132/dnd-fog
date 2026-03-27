@@ -10,7 +10,7 @@
   var P = {
     world:         { w: 1920, h: 1080 },
     vp:            { x: 0, y: 0, zoom: 1 },
-    groups:        [],   // { id, visible, layers:[], fogImg:null }
+    groups:        [],   // { id, visible, layers:[], fogImg:null, overlayImg:null }
     activeGroupId: null,
     ready:         false,
   };
@@ -31,9 +31,10 @@
     bc.onmessage = function (e) {
       var type    = e.data.type;
       var payload = e.data.payload;
-      if (type === 'FULL_STATE')  { applyFullState(payload); }
-      else if (type === 'FOG_UPDATE') { applyFogUpdate(payload); }
-      else if (type === 'VP_UPDATE')  { P.vp.x = payload.vp.x; P.vp.y = payload.vp.y; P.vp.zoom = payload.vp.zoom; }
+      if (type === 'FULL_STATE')      { applyFullState(payload); }
+      else if (type === 'FOG_UPDATE')     { applyFogUpdate(payload); }
+      else if (type === 'OVERLAY_UPDATE') { applyOverlayUpdate(payload); }
+      else if (type === 'VP_UPDATE')      { P.vp.x = payload.vp.x; P.vp.y = payload.vp.y; P.vp.zoom = payload.vp.zoom; }
     };
 
     bc.postMessage({ type: 'PLAYER_HELLO' });
@@ -69,18 +70,19 @@
       return;
     }
 
-    // Build new groups array; carry over cached fogImg where possible
+    // Build new groups array; carry over cached fogImg / overlayImg where possible
     P.groups = groupDTOs.map(function (gdto) {
       var prev = existingGroups[gdto.id] || {};
       return {
-        id:      gdto.id,
-        visible: gdto.visible !== false,
-        fogImg:  prev.fogImg || null,
-        layers:  [],
+        id:         gdto.id,
+        visible:    gdto.visible !== false,
+        fogImg:     prev.fogImg     || null,
+        overlayImg: prev.overlayImg || null,
+        layers:     [],
       };
     });
 
-    // Re-load fog for every group from the DTO
+    // Re-load fog and overlay for every group from the DTO
     groupDTOs.forEach(function (gdto, gi) {
       if (gdto.fogURL) {
         var fi = new Image();
@@ -88,6 +90,13 @@
           return function () { P.groups[groupIdx].fogImg = this; };
         }(gi));
         fi.src = gdto.fogURL;
+      }
+      if (gdto.overlayURL) {
+        var oi = new Image();
+        oi.onload = (function (groupIdx) {
+          return function () { P.groups[groupIdx].overlayImg = this; };
+        }(gi));
+        oi.src = gdto.overlayURL;
       }
     });
 
@@ -153,6 +162,16 @@
     img.src = payload.fogURL;
   }
 
+  function applyOverlayUpdate(payload) {
+    if (!payload.overlayURL || !payload.groupId) return;
+    var g = P.groups.find(function (x) { return x.id === payload.groupId; });
+    if (!g) return;
+    var img   = new Image();
+    var group = g;
+    img.onload = function () { group.overlayImg = this; };
+    img.src = payload.overlayURL;
+  }
+
   function hideWaiting() {
     var w = document.getElementById('waiting');
     if (w) w.style.display = 'none';
@@ -185,6 +204,11 @@
       ctx.globalAlpha = l.opacity;
       ctx.drawImage(l.img, l.x, l.y, l.w * l.sx, l.h * l.sy);
       ctx.restore();
+    }
+
+    // Texture overlay (beneath fog, visible to players)
+    if (g.overlayImg) {
+      ctx.drawImage(g.overlayImg, 0, 0);
     }
 
     // Fog – fully opaque so players cannot see unrevealed areas

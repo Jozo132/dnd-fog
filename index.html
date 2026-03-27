@@ -65,6 +65,9 @@
       <button id="btn-fog-commit" title="Apply fog changes and send to players (Enter)">✓ Send to players</button>
       <button id="btn-fog-revert" title="Discard fog changes and revert (Esc)">✗ Revert</button>
     </div>
+    <!-- Minimap -->
+    <canvas id="minimap-canvas" width="220" height="124"></canvas>
+    <button id="btn-minimap-toggle" class="active" title="Toggle minimap (M)">🗺 Map</button>
   </div>
 
   <!-- RIGHT: Tools Panel -->
@@ -73,10 +76,11 @@
     <div>
       <h2>Fog Tools</h2>
       <div class="tool-group">
-        <button class="tool-btn active" data-tool="reveal" title="Paint to reveal (R)">🔦 Reveal</button>
-        <button class="tool-btn"        data-tool="hide"    title="Paint to hide (H)">🌑 Hide</button>
-        <button class="tool-btn"        data-tool="pan"     title="Pan the viewport (Space / middle-click)">✋ Pan</button>
+        <button class="tool-btn active" data-tool="reveal"    title="Paint to reveal (R)">🔦 Reveal</button>
+        <button class="tool-btn"        data-tool="hide"      title="Paint to hide (H)">🌑 Hide</button>
+        <button class="tool-btn"        data-tool="pan"       title="Pan the viewport (Space / middle-click)">✋ Pan</button>
         <button class="tool-btn"        data-tool="transform" title="Select &amp; drag layers (T)">⇔ Transform</button>
+        <button class="tool-btn"        data-tool="texture"   title="Paint environment textures (X)">🖌 Texture</button>
       </div>
     </div>
 
@@ -94,6 +98,22 @@
       <h2>Fog</h2>
       <button id="btn-reveal-all">☀️ Reveal All</button>
       <button id="btn-hide-all">🌑 Hide All</button>
+    </div>
+
+    <hr class="sep">
+
+    <div class="texture-block">
+      <h2>Textures</h2>
+      <div id="texture-palette">
+        <button class="tex-btn active" data-tex="scorched" title="Scorched / burnt">🔥 Scorched</button>
+        <button class="tex-btn"        data-tex="slime"    title="Slime / ooze">💚 Slime</button>
+        <button class="tex-btn"        data-tex="water"    title="Water puddle">💧 Water</button>
+        <button class="tex-btn"        data-tex="beer"     title="Beer spill">🍺 Beer</button>
+        <button class="tex-btn"        data-tex="fire"     title="Fire embers">🔴 Fire</button>
+        <button class="tex-btn"        data-tex="earth"    title="Mud / earth">🟤 Earth</button>
+        <button class="tex-btn"        data-tex="cracks"   title="Cracks in floor">⬜ Cracks</button>
+        <button class="tex-btn"        data-tex="erase"    title="Erase texture">🚫 Erase</button>
+      </div>
     </div>
 
     <hr class="sep">

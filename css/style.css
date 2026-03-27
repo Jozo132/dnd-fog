@@ -355,6 +355,20 @@ hr.sep {
 }
 .gt-del { padding: 1px 5px; font-size: 11px; flex-shrink: 0; }
 
+/* PLAYER-GROUP PIN BUTTON */
+.gt-pin {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+  opacity: 0.38;
+  flex-shrink: 0;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.gt-pin:hover { background: transparent; opacity: 0.9; border-color: var(--gold); }
+.gt-pin.active { opacity: 1; border-color: var(--gold); }
+
 /* CHECKPOINTS */
 .checkpoint-block { display: flex; flex-direction: column; gap: 4px; }
 .checkpoint-block > button { width: 100%; text-align: left; font-size: 12px; }
@@ -475,6 +489,50 @@ hr.sep {
   padding: 5px 12px;
 }
 #btn-fog-revert:hover { background: #e94560; color: #fff; border-color: #e94560; }
+
+/* MINIMAP */
+#minimap-canvas {
+  position: absolute;
+  bottom: 46px;
+  right: 10px;
+  width: 220px;
+  height: 124px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: #000;
+  cursor: pointer;
+  z-index: 15;
+  transition: opacity 0.15s;
+}
+#minimap-canvas.hidden { display: none; }
+#btn-minimap-toggle {
+  position: absolute;
+  bottom: 14px;
+  right: 10px;
+  z-index: 16;
+  padding: 3px 8px;
+  font-size: 11px;
+  opacity: 0.72;
+}
+#btn-minimap-toggle:hover { opacity: 1; }
+#btn-minimap-toggle.active { border-color: var(--gold); color: var(--gold); opacity: 1; }
+
+/* TEXTURE PALETTE */
+.texture-block { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+#texture-palette {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+}
+.tex-btn {
+  font-size: 10px;
+  padding: 4px 5px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tex-btn.active { background: var(--accent); border-color: var(--accent); }
 
 /* Status toast */
 #toast {

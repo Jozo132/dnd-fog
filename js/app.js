@@ -9,14 +9,17 @@
   // STATE
   // ─────────────────────────────────────────────────────────────────────────
   const S = {
-    groups: [],           // array of { id, name, visible, fog:{canvas,ctx}, layers[] }
-    activeGroupId: null,  // id of the group currently being edited / shown to players
+    groups: [],           // array of { id, name, visible, fog:{canvas,ctx}, overlay:{canvas,ctx}, layers[] }
+    activeGroupId: null,  // id of the group currently being edited by the DM
+    playerGroupId: null,  // id of the group players see (may differ from activeGroupId)
     checkpoints: [],      // array of { id, name, vp:{x,y,zoom} }
     fogSession: { active: false, snapshot: null, groupId: null }, // staged fog painting
     vp: { x: 0, y: 0, zoom: 1 },
     world: { w: 1920, h: 1080 },
-    tool: 'reveal',       // reveal | hide | pan | transform
+    tool: 'reveal',       // reveal | hide | pan | transform | texture
     brushSize: 50,
+    textureBrush: 'scorched', // scorched | slime | water | beer | fire | earth | cracks | erase
+    minimapVisible: true,
     isDrawing: false,
     isPanning: false,
     panStart: null, vpStart: null,
@@ -51,6 +54,7 @@
     const dg        = makeGroup('Surface');
     S.groups        = [dg];
     S.activeGroupId = dg.id;
+    S.playerGroupId = dg.id;
 
     S.bc = new BroadcastChannel('dnd-fog');
     S.bc.onmessage = onBcMessage;
@@ -73,11 +77,18 @@
     const fogCtx = fogCanvas.getContext('2d');
     fogCtx.fillStyle = '#000';
     fogCtx.fillRect(0, 0, S.world.w, S.world.h);
+
+    const overlayCanvas = document.createElement('canvas');
+    overlayCanvas.width  = S.world.w;
+    overlayCanvas.height = S.world.h;
+    // Overlay starts fully transparent – no fill needed
+
     return {
       id:      'g_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       name:    name || 'Group',
       visible: true,
       fog:     { canvas: fogCanvas, ctx: fogCtx },
+      overlay: { canvas: overlayCanvas, ctx: overlayCanvas.getContext('2d') },
       layers:  [],
     };
   }
@@ -96,6 +107,7 @@
     if (!confirm('Delete group "' + g.name + '" and all its layers?')) return;
     S.groups = S.groups.filter(x => x.id !== id);
     if (S.activeGroupId === id) S.activeGroupId = S.groups[0].id;
+    if (S.playerGroupId === id) S.playerGroupId = S.groups[0].id;
     rebuildGroupTabs();
     rebuildLayerPanel();
     broadcastFull();
@@ -133,6 +145,11 @@
       nameEl.spellcheck = false;
       nameEl.textContent = g.name;
 
+      const pinBtn = document.createElement('button');
+      pinBtn.className = 'gt-pin' + (g.id === S.playerGroupId ? ' active' : '');
+      pinBtn.title = g.id === S.playerGroupId ? 'Players are watching this group' : 'Set as player view';
+      pinBtn.textContent = '\uD83D\uDCFA'; // 📺
+
       const delBtn = document.createElement('button');
       delBtn.className = 'gt-del';
       delBtn.title = 'Delete group';
@@ -140,6 +157,7 @@
 
       div.appendChild(visBtn);
       div.appendChild(nameEl);
+      div.appendChild(pinBtn);
       div.appendChild(delBtn);
       container.appendChild(div);
 
@@ -154,6 +172,11 @@
         rebuildGroupTabs();
         broadcastFull();
         scheduleSave();
+      });
+
+      pinBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        setPlayerGroup(g.id);
       });
 
       delBtn.addEventListener('click', e => {
@@ -310,6 +333,16 @@
       g.fog.ctx.fillStyle = '#000';
       g.fog.ctx.fillRect(0, 0, w, h);
       g.fog.ctx.globalCompositeOperation = 'source-over';
+
+      if (g.overlay) {
+        const oldOv = document.createElement('canvas');
+        oldOv.width  = g.overlay.canvas.width;
+        oldOv.height = g.overlay.canvas.height;
+        oldOv.getContext('2d').drawImage(g.overlay.canvas, 0, 0);
+        g.overlay.canvas.width  = w;
+        g.overlay.canvas.height = h;
+        g.overlay.ctx.drawImage(oldOv, 0, 0, w, h);
+      }
     });
     S.world.w = w;
     S.world.h = h;
@@ -389,6 +422,11 @@
       ctx.restore();
     }
 
+    // Texture overlay (beneath fog, visible to both DM and players)
+    if (g.overlay && g.overlay.canvas) {
+      ctx.drawImage(g.overlay.canvas, 0, 0);
+    }
+
     // Fog – 65 % opacity so DM can see the map beneath
     ctx.save();
     ctx.globalAlpha = 0.65;
@@ -399,11 +437,13 @@
     renderCheckpointMarkers();
 
     // Brush cursor
-    if (S.cursorWorld && (S.tool === 'reveal' || S.tool === 'hide')) {
+    if (S.cursorWorld && (S.tool === 'reveal' || S.tool === 'hide' || S.tool === 'texture')) {
       ctx.save();
       ctx.strokeStyle = S.tool === 'reveal'
         ? 'rgba(255,200,40,0.85)'
-        : 'rgba(80,80,255,0.85)';
+        : S.tool === 'hide'
+        ? 'rgba(80,80,255,0.85)'
+        : (TEXTURE_CURSOR_COLORS[S.textureBrush] || 'rgba(200,100,50,0.85)');
       ctx.lineWidth = 2 / S.vp.zoom;
       ctx.setLineDash([5 / S.vp.zoom, 5 / S.vp.zoom]);
       ctx.beginPath();
@@ -413,6 +453,8 @@
     }
 
     ctx.restore();
+
+    renderMinimap();
   }
 
   function renderCheckpointMarkers() {
@@ -487,6 +529,13 @@
       return;
     }
 
+    if (S.tool === 'texture') {
+      S.isDrawing = true;
+      S.lastFogPt = w;
+      applyTexture(w.x, w.y);
+      return;
+    }
+
     if (S.tool === 'transform') {
       const hit = hitTestLayer(w.x, w.y);
       if (hit) {
@@ -519,6 +568,12 @@
       return;
     }
 
+    if (S.isDrawing && S.tool === 'texture') {
+      if (S.lastFogPt) interpolateTexture(S.lastFogPt.x, S.lastFogPt.y, w.x, w.y);
+      S.lastFogPt = w;
+      return;
+    }
+
     if (S.isDraggingLayer && S.selectedId) {
       const l = ag().layers.find(function (x) { return x.id === S.selectedId; });
       if (l) {
@@ -532,13 +587,15 @@
 
   function onMouseUp() {
     const wasDrag = S.isDraggingLayer;
+    const wasTex  = S.isDrawing && S.tool === 'texture';
     S.isDrawing       = false;
     S.isPanning       = false;
     S.isDraggingLayer = false;
     S.lastFogPt       = null;
     updateCursor();
     // Fog changes are held in session until the DM clicks "Send to players"
-    if (wasDrag) { broadcastFull(); scheduleSave(); }
+    if (wasDrag) { broadcastFull();    scheduleSave(); }
+    if (wasTex)  { broadcastOverlay(); scheduleSave(); }
   }
 
   function onMouseLeave() {
@@ -614,7 +671,7 @@
   // CURSOR
   // ─────────────────────────────────────────────────────────────────────────
   function updateCursor() {
-    var map = { reveal: 'crosshair', hide: 'crosshair', pan: 'grab', transform: 'default' };
+    var map = { reveal: 'crosshair', hide: 'crosshair', pan: 'grab', transform: 'default', texture: 'crosshair' };
     canvas.style.cursor = map[S.tool] || 'default';
   }
 
@@ -1110,6 +1167,257 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // PLAYER GROUP – which group the players' screen shows
+  // ─────────────────────────────────────────────────────────────────────────
+  function setPlayerGroup(id) {
+    var g = S.groups.find(function (x) { return x.id === id; });
+    if (!g) return;
+    S.playerGroupId = id;
+    rebuildGroupTabs();
+    broadcastFull();
+    scheduleSave();
+    toast('Player view \u2192 "' + g.name + '"');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TEXTURE PAINT  (overlay canvas per group, visible to DM and players)
+  // ─────────────────────────────────────────────────────────────────────────
+  var TEXTURE_CURSOR_COLORS = {
+    scorched: 'rgba(80, 40, 10, 0.9)',
+    slime:    'rgba(80, 200, 40, 0.9)',
+    water:    'rgba(60, 150, 230, 0.9)',
+    beer:     'rgba(220, 160, 30, 0.9)',
+    fire:     'rgba(255, 100, 0, 0.9)',
+    earth:    'rgba(130, 85, 40, 0.9)',
+    cracks:   'rgba(40, 30, 20, 0.9)',
+    erase:    'rgba(230, 50, 80, 0.9)',
+  };
+
+  function applyTexture(wx, wy) {
+    var g = ag();
+    if (!g || !g.overlay) return;
+    var oc = g.overlay.ctx;
+    var r  = S.brushSize;
+    if (S.textureBrush === 'erase') {
+      oc.save();
+      oc.globalCompositeOperation = 'destination-out';
+      oc.beginPath();
+      oc.arc(wx, wy, r, 0, Math.PI * 2);
+      oc.fill();
+      oc.restore();
+      return;
+    }
+    stampTexture(oc, wx, wy, r, S.textureBrush);
+  }
+
+  function interpolateTexture(x1, y1, x2, y2) {
+    var d = Math.hypot(x2 - x1, y2 - y1);
+    var steps = Math.max(1, Math.ceil(d / (S.brushSize * 0.45)));
+    for (var i = 0; i <= steps; i++) {
+      var t = i / steps;
+      applyTexture(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
+    }
+  }
+
+  function stampTexture(ctx, cx, cy, r, type) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    switch (type) {
+      case 'scorched': drawTexScorched(ctx, cx, cy, r); break;
+      case 'slime':    drawTexSlime(ctx, cx, cy, r);    break;
+      case 'water':    drawTexWater(ctx, cx, cy, r);    break;
+      case 'beer':     drawTexBeer(ctx, cx, cy, r);     break;
+      case 'fire':     drawTexFire(ctx, cx, cy, r);     break;
+      case 'earth':    drawTexEarth(ctx, cx, cy, r);    break;
+      case 'cracks':   drawTexCracks(ctx, cx, cy, r);   break;
+    }
+    ctx.restore();
+  }
+
+  function drawTexScorched(ctx, cx, cy, r) {
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0,    'rgba(50, 25, 8, 0.92)');
+    g.addColorStop(0.55, 'rgba(25, 12, 3, 0.78)');
+    g.addColorStop(1,    'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.fillStyle = 'rgba(8, 4, 1, 0.65)';
+    for (var i = 0; i < 14; i++) {
+      var a = (i / 14) * Math.PI * 2 + i * 0.41;
+      var d = r * (0.15 + (i % 4) * 0.18);
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, r * 0.07 + (i % 3) * r * 0.02, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawTexSlime(ctx, cx, cy, r) {
+    var g = ctx.createRadialGradient(cx - r * 0.15, cy - r * 0.2, 0, cx, cy, r);
+    g.addColorStop(0,   'rgba(140, 210, 50, 0.88)');
+    g.addColorStop(0.6, 'rgba(70, 160, 20, 0.72)');
+    g.addColorStop(1,   'rgba(30, 90, 5, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    var h = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.28, 0, cx - r * 0.1, cy - r * 0.1, r * 0.48);
+    h.addColorStop(0, 'rgba(210, 255, 120, 0.45)');
+    h.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = h;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+
+  function drawTexWater(ctx, cx, cy, r) {
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0,    'rgba(70, 155, 225, 0.72)');
+    g.addColorStop(0.65, 'rgba(35, 95, 185, 0.55)');
+    g.addColorStop(1,    'rgba(15, 55, 140, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.strokeStyle = 'rgba(180, 225, 255, 0.32)';
+    ctx.lineWidth = Math.max(1, r * 0.045);
+    for (var i = -2; i <= 2; i++) {
+      var wy = cy + i * r * 0.22;
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 0.72, wy);
+      ctx.quadraticCurveTo(cx, wy - r * 0.1, cx + r * 0.72, wy);
+      ctx.stroke();
+    }
+  }
+
+  function drawTexBeer(ctx, cx, cy, r) {
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0,   'rgba(210, 155, 35, 0.82)');
+    g.addColorStop(0.6, 'rgba(165, 100, 18, 0.66)');
+    g.addColorStop(1,   'rgba(100, 58, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.fillStyle = 'rgba(255, 252, 235, 0.52)';
+    for (var i = 0; i < 10; i++) {
+      var a = (i / 10) * Math.PI * 2 + i * 0.63;
+      var d = r * (0.12 + (i % 3) * 0.22);
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, r * 0.085 + (i % 3) * r * 0.03, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawTexFire(ctx, cx, cy, r) {
+    var g = ctx.createRadialGradient(cx, cy + r * 0.18, 0, cx, cy, r);
+    g.addColorStop(0,    'rgba(255, 245, 55, 0.92)');
+    g.addColorStop(0.3,  'rgba(255, 110, 0, 0.82)');
+    g.addColorStop(0.65, 'rgba(200, 28, 0, 0.55)');
+    g.addColorStop(1,    'rgba(60, 0, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    var hg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.35);
+    hg.addColorStop(0, 'rgba(255, 255, 200, 0.7)');
+    hg.addColorStop(1, 'rgba(255, 255, 200, 0)');
+    ctx.fillStyle = hg;
+    ctx.fillRect(cx - r * 0.35, cy - r * 0.35, r * 0.7, r * 0.7);
+  }
+
+  function drawTexEarth(ctx, cx, cy, r) {
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0,    'rgba(105, 68, 28, 0.88)');
+    g.addColorStop(0.62, 'rgba(82, 52, 18, 0.72)');
+    g.addColorStop(1,    'rgba(52, 30, 8, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.fillStyle = 'rgba(58, 38, 14, 0.62)';
+    for (var i = 0; i < 12; i++) {
+      var a = (i / 12) * Math.PI * 2 + i * 0.5;
+      var d = r * (0.12 + (i % 4) * 0.17);
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, r * 0.06 + (i % 3) * r * 0.025, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawTexCracks(ctx, cx, cy, r) {
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, 'rgba(18, 12, 8, 0.72)');
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.strokeStyle = 'rgba(12, 8, 5, 0.88)';
+    ctx.lineWidth = Math.max(1.2, r * 0.038);
+    var numCracks = Math.max(4, Math.floor(r / 15));
+    for (var i = 0; i < numCracks; i++) {
+      var a = (i / numCracks) * Math.PI * 2 + i * 0.45;
+      var midX = cx + Math.cos(a + 0.3) * r * 0.38;
+      var midY = cy + Math.sin(a + 0.3) * r * 0.38;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(midX, midY);
+      ctx.lineTo(cx + Math.cos(a) * r * 0.88, cy + Math.sin(a) * r * 0.88);
+      ctx.stroke();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MINIMAP  (rendered to a separate canvas element in the corner)
+  // ─────────────────────────────────────────────────────────────────────────
+  function renderMinimap() {
+    if (!S.minimapVisible) return;
+    var mc = document.getElementById('minimap-canvas');
+    if (!mc) return;
+    var mctx = mc.getContext('2d');
+    var MW = mc.width, MH = mc.height;
+    var scale = Math.min(MW / S.world.w, MH / S.world.h);
+    var offX = (MW - S.world.w * scale) / 2;
+    var offY = (MH - S.world.h * scale) / 2;
+
+    mctx.clearRect(0, 0, MW, MH);
+    mctx.fillStyle = '#02020a';
+    mctx.fillRect(0, 0, MW, MH);
+
+    var g = ag();
+    if (!g) return;
+
+    mctx.save();
+    mctx.translate(offX, offY);
+    mctx.scale(scale, scale);
+
+    mctx.fillStyle = '#0d0d1e';
+    mctx.fillRect(0, 0, S.world.w, S.world.h);
+
+    for (var i = g.layers.length - 1; i >= 0; i--) {
+      var l = g.layers[i];
+      if (!l.visible || !l.img || !l.img.complete) continue;
+      mctx.save();
+      mctx.globalAlpha = l.opacity;
+      mctx.drawImage(l.img, l.x, l.y, l.w * l.sx, l.h * l.sy);
+      mctx.restore();
+    }
+
+    if (g.overlay && g.overlay.canvas) {
+      mctx.drawImage(g.overlay.canvas, 0, 0);
+    }
+
+    mctx.save();
+    mctx.globalAlpha = 0.8;
+    mctx.drawImage(g.fog.canvas, 0, 0);
+    mctx.restore();
+
+    mctx.restore();
+
+    // World border
+    mctx.strokeStyle = 'rgba(80, 90, 130, 0.6)';
+    mctx.lineWidth = 1;
+    mctx.strokeRect(offX, offY, S.world.w * scale, S.world.h * scale);
+
+    // DM viewport indicator (gold rectangle)
+    var vpX = offX + (-S.vp.x / S.vp.zoom) * scale;
+    var vpY = offY + (-S.vp.y / S.vp.zoom) * scale;
+    var vpW = (canvas.width  / S.vp.zoom) * scale;
+    var vpH = (canvas.height / S.vp.zoom) * scale;
+    mctx.strokeStyle = 'rgba(245,166,35,0.88)';
+    mctx.lineWidth = 1.5;
+    mctx.strokeRect(vpX, vpY, vpW, vpH);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // CHECKPOINT MANAGEMENT
   // ─────────────────────────────────────────────────────────────────────────
   function saveCheckpoint() {
@@ -1198,7 +1506,7 @@
       payload: {
         world:         { w: S.world.w, h: S.world.h },
         vp:            { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom },
-        activeGroupId: S.activeGroupId,
+        activeGroupId: S.playerGroupId || S.activeGroupId, // send playerGroupId; players render their pinned group
         groups:        S.groups.map(groupToDTO),
       },
     });
@@ -1210,6 +1518,16 @@
     S.bc.postMessage({
       type: 'FOG_UPDATE',
       payload: { groupId: g.id, fogURL: g.fog.canvas.toDataURL('image/png') },
+    });
+  }
+
+  function broadcastOverlay() {
+    if (!S.bc) return;
+    var g = ag();
+    if (!g || !g.overlay) return;
+    S.bc.postMessage({
+      type: 'OVERLAY_UPDATE',
+      payload: { groupId: g.id, overlayURL: g.overlay.canvas.toDataURL('image/png') },
     });
   }
 
@@ -1241,11 +1559,12 @@
 
   function groupToDTO(g) {
     return {
-      id:      g.id,
-      name:    g.name,
-      visible: g.visible,
-      fogURL:  g.fog.canvas.toDataURL('image/png'),
-      layers:  g.layers.map(layerToDTO),
+      id:         g.id,
+      name:       g.name,
+      visible:    g.visible,
+      fogURL:     g.fog.canvas.toDataURL('image/png'),
+      overlayURL: g.overlay ? g.overlay.canvas.toDataURL('image/png') : null,
+      layers:     g.layers.map(layerToDTO),
     };
   }
 
@@ -1259,6 +1578,7 @@
       world:         { w: S.world.w, h: S.world.h },
       vp:            { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom },
       activeGroupId: S.activeGroupId,
+      playerGroupId: S.playerGroupId,
       groups:        S.groups.map(groupToDTO),
       checkpoints:   S.checkpoints.map(function (cp) {
         return { id: cp.id, name: cp.name, vp: { x: cp.vp.x, y: cp.vp.y, zoom: cp.vp.zoom } };
@@ -1337,12 +1657,26 @@
         };
         S.groups.push(g);
 
+        // Create overlay canvas for this group
+        var overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = w; overlayCanvas.height = h;
+        var overlayCtx = overlayCanvas.getContext('2d');
+        g.overlay = { canvas: overlayCanvas, ctx: overlayCtx };
+
         if (gdto.fogURL) {
           var fi = new Image();
           fi.onload = (function (fc, fctx) {
             return function () { fctx.clearRect(0, 0, w, h); fctx.drawImage(fc, 0, 0); };
           }(fi, fogCtx));
           fi.src = gdto.fogURL;
+        }
+
+        if (gdto.overlayURL) {
+          var oi = new Image();
+          oi.onload = (function (oc, octx) {
+            return function () { octx.drawImage(oc, 0, 0); };
+          }(oi, overlayCtx));
+          oi.src = gdto.overlayURL;
         }
 
         var dtos = gdto.layers || [];
@@ -1401,6 +1735,11 @@
       S.groups        = [dg];
       S.activeGroupId = dg.id;
 
+      // Create overlay canvas for migrated group
+      var ovCanvas = document.createElement('canvas');
+      ovCanvas.width = w; ovCanvas.height = h;
+      dg.overlay = { canvas: ovCanvas, ctx: ovCanvas.getContext('2d') };
+
       var fogURL = data.fogURL || data.fog;
       if (fogURL) {
         var fi = new Image();
@@ -1440,6 +1779,10 @@
       if (!S.groups.find(function (g) { return g.id === S.activeGroupId; })) {
         S.activeGroupId = S.groups[0] ? S.groups[0].id : null;
       }
+      S.playerGroupId = data.playerGroupId || S.activeGroupId;
+      if (!S.groups.find(function (g) { return g.id === S.playerGroupId; })) {
+        S.playerGroupId = S.groups[0] ? S.groups[0].id : null;
+      }
       document.getElementById('world-w').value = w;
       document.getElementById('world-h').value = h;
       // Discard any in-progress fog session (state no longer applies after reload)
@@ -1465,6 +1808,7 @@
     var dg        = makeGroup('Surface');
     S.groups        = [dg];
     S.activeGroupId = dg.id;
+    S.playerGroupId = dg.id;
     S.checkpoints   = [];
     S.world         = { w: 1920, h: 1080 };
     S.vp            = { x: 0, y: 0, zoom: 1 };
@@ -1577,6 +1921,50 @@
       });
     });
 
+    // Texture palette – clicking a brush also switches to the texture tool
+    document.querySelectorAll('.tex-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.tex-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        S.textureBrush = btn.dataset.tex;
+        // Auto-switch to texture tool
+        document.querySelectorAll('.tool-btn').forEach(function (b) { b.classList.remove('active'); });
+        var texBtn = document.querySelector('.tool-btn[data-tool="texture"]');
+        if (texBtn) texBtn.classList.add('active');
+        S.tool = 'texture';
+        updateCursor();
+      });
+    });
+
+    // Minimap toggle
+    document.getElementById('btn-minimap-toggle').addEventListener('click', function () {
+      S.minimapVisible = !S.minimapVisible;
+      var mc = document.getElementById('minimap-canvas');
+      if (mc) mc.classList.toggle('hidden', !S.minimapVisible);
+      this.classList.toggle('active', S.minimapVisible);
+    });
+
+    // Minimap click-to-navigate
+    var minimapCanvas = document.getElementById('minimap-canvas');
+    if (minimapCanvas) {
+      minimapCanvas.addEventListener('click', function (ev) {
+        if (!S.minimapVisible) return;
+        var rect = minimapCanvas.getBoundingClientRect();
+        var scaleX = minimapCanvas.width  / rect.width;
+        var scaleY = minimapCanvas.height / rect.height;
+        var mx = (ev.clientX - rect.left) * scaleX;
+        var my = (ev.clientY - rect.top)  * scaleY;
+        var scl = Math.min(minimapCanvas.width / S.world.w, minimapCanvas.height / S.world.h);
+        var offX = (minimapCanvas.width  - S.world.w * scl) / 2;
+        var offY = (minimapCanvas.height - S.world.h * scl) / 2;
+        var wx = (mx - offX) / scl;
+        var wy = (my - offY) / scl;
+        S.vp.x = canvas.width  / 2 - wx * S.vp.zoom;
+        S.vp.y = canvas.height / 2 - wy * S.vp.zoom;
+        throttleBroadcastViewport();
+      });
+    }
+
     var brushSlider = document.getElementById('brush-size');
     var brushVal    = document.getElementById('brush-val');
     brushSlider.addEventListener('input', function () {
@@ -1602,7 +1990,7 @@
         if (e.key === 'Enter') { e.preventDefault(); commitFogSession(); return; }
         if (e.key === 'Escape') { e.preventDefault(); revertFogSession(); return; }
       }
-      var map = { r: 'reveal', h: 'hide', p: 'pan', t: 'transform' };
+      var map = { r: 'reveal', h: 'hide', p: 'pan', t: 'transform', x: 'texture' };
       if (map[e.key.toLowerCase()]) {
         document.querySelectorAll('.tool-btn').forEach(function (b) { b.classList.remove('active'); });
         var btn = document.querySelector('.tool-btn[data-tool="' + map[e.key.toLowerCase()] + '"]');
@@ -1611,6 +1999,10 @@
         updateCursor();
       }
       if (e.key === 'f' || e.key === 'F') fitView();
+      if (e.key === 'm' || e.key === 'M') {
+        var mmBtn = document.getElementById('btn-minimap-toggle');
+        if (mmBtn) mmBtn.click();
+      }
       if (e.code === 'Space' && !e.repeat) {
         canvas.style.cursor = 'grab';
         canvas.dataset.spaceHeld = '1';
