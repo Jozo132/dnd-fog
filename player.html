@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DnD Fog of War – Player View</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🗺</text></svg>">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #000;
+      font-family: sans-serif;
+    }
+    #player-canvas { display: block; width: 100%; height: 100%; }
+    #waiting {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      font-size: 1.1rem;
+      pointer-events: none;
+      gap: 10px;
+    }
+    #waiting .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #222;
+      border-top-color: #555;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <canvas id="player-canvas"></canvas>
+  <div id="waiting">
+    <div class="spinner"></div>
+    <span>Waiting for DM…</span>
+  </div>
+  <script src="js/player.js"></script>
+</body>
+</html>

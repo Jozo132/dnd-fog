@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DnD Fog of War – DM Panel</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🎲</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ── HEADER ───────────────────────────────────────────────── -->
+<div id="header">
+  <h1>🎲 DnD Fog of War</h1>
+  <span class="hdr-sep"></span>
+  <div class="hdr-btn-group">
+    <button id="btn-fit"    title="Fit map to view (F)">⊞ Fit</button>
+    <button id="btn-player" class="gold" title="Open projector window for players">📺 Player View</button>
+    <button id="btn-import" title="Import scenario JSON">📂 Import</button>
+    <button id="btn-export" title="Export scenario JSON">💾 Export</button>
+    <button id="btn-clear"  title="Clear everything" style="color:#f66;border-color:#f66">🗑 Clear</button>
+  </div>
+</div>
+
+<!-- ── MAIN ─────────────────────────────────────────────────── -->
+<div id="main">
+
+  <!-- LEFT: Layer Panel -->
+  <aside id="layer-panel">
+    <!-- Group section -->
+    <div class="panel-title">
+      <h2>Groups</h2>
+      <button id="btn-add-group" title="Add new layer group (e.g. underground floor)">+ Group</button>
+    </div>
+    <div id="group-tabs"></div>
+
+    <!-- Layer section -->
+    <div id="layer-section">
+      <div class="panel-title">
+        <h2>Layers</h2>
+        <div class="layer-add-btns">
+          <button id="btn-add-layer" title="Import image(s) as new layer(s)">+ Add</button>
+          <details class="sample-picker" title="Insert a built-in sample map">
+            <summary>🗺</summary>
+            <ul class="sample-menu">
+              <li data-sample="dungeon_room">🏰 Dungeon Room</li>
+              <li data-sample="forest">🌲 Forest Clearing</li>
+              <li data-sample="tavern">🍺 Tavern</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+      <ul id="layer-list">
+        <li class="empty-hint">No layers yet.<br>Click <b>+ Add</b> or drop images onto the canvas.</li>
+      </ul>
+    </div>
+  </aside>
+
+  <!-- CENTRE: Canvas -->
+  <div id="canvas-wrap">
+    <canvas id="main-canvas"></canvas>
+    <!-- Fog session staging bar – shown while the DM has unsent fog strokes -->
+    <div id="fog-session-bar">
+      <span class="fsp-label">🎨 Unsent fog changes</span>
+      <button id="btn-fog-commit" title="Apply fog changes and send to players (Enter)">✓ Send to players</button>
+      <button id="btn-fog-revert" title="Discard fog changes and revert (Esc)">✗ Revert</button>
+    </div>
+    <!-- Minimap -->
+    <canvas id="minimap-canvas" width="220" height="124"></canvas>
+    <button id="btn-minimap-toggle" class="active" title="Toggle minimap (M)">🗺 Map</button>
+  </div>
+
+  <!-- RIGHT: Tools Panel -->
+  <aside id="tools-panel">
+
+    <div>
+      <h2>Fog Tools</h2>
+      <div class="tool-group">
+        <button class="tool-btn active" data-tool="reveal"    title="Paint to reveal (R)">🔦 Reveal</button>
+        <button class="tool-btn"        data-tool="hide"      title="Paint to hide (H)">🌑 Hide</button>
+        <button class="tool-btn"        data-tool="pan"       title="Pan the viewport (Space / middle-click)">✋ Pan</button>
+        <button class="tool-btn"        data-tool="transform" title="Select &amp; drag layers (T)">⇔ Transform</button>
+        <button class="tool-btn"        data-tool="texture"   title="Paint environment textures (X)">🖌 Texture</button>
+      </div>
+    </div>
+
+    <div class="brush-block">
+      <div class="brush-row">
+        <span>Brush size</span>
+        <span id="brush-val">50 px</span>
+      </div>
+      <input type="range" id="brush-size" min="5" max="400" value="50">
+    </div>
+
+    <hr class="sep">
+
+    <div class="fog-block">
+      <h2>Fog</h2>
+      <button id="btn-reveal-all">☀️ Reveal All</button>
+      <button id="btn-hide-all">🌑 Hide All</button>
+    </div>
+
+    <hr class="sep">
+
+    <div class="texture-block">
+      <h2>Textures</h2>
+      <div id="texture-palette">
+        <button class="tex-btn active" data-tex="scorched" title="Scorched / burnt">🔥 Scorched</button>
+        <button class="tex-btn"        data-tex="slime"    title="Slime / ooze">💚 Slime</button>
+        <button class="tex-btn"        data-tex="water"    title="Water puddle">💧 Water</button>
+        <button class="tex-btn"        data-tex="beer"     title="Beer spill">🍺 Beer</button>
+        <button class="tex-btn"        data-tex="fire"     title="Fire embers">🔴 Fire</button>
+        <button class="tex-btn"        data-tex="earth"    title="Mud / earth">🟤 Earth</button>
+        <button class="tex-btn"        data-tex="cracks"   title="Cracks in floor">⬜ Cracks</button>
+        <button class="tex-btn"        data-tex="erase"    title="Erase texture">🚫 Erase</button>
+      </div>
+    </div>
+
+    <hr class="sep">
+
+    <div class="grid-block">
+      <h2>Grid</h2>
+      <div class="grid-row">
+        <input type="checkbox" id="show-grid">
+        <label for="show-grid">Show grid</label>
+      </div>
+      <div class="grid-row">
+        <label for="grid-size">Cell&nbsp;</label>
+        <input type="number" id="grid-size" value="50" min="5" max="1000" style="width:58px">
+        <span>px</span>
+      </div>
+    </div>
+
+    <hr class="sep">
+
+    <div class="world-block">
+      <h2>World Size</h2>
+      <div class="wrow">
+        <input type="number" id="world-w" value="1920" min="100" max="16000">
+        <span>×</span>
+        <input type="number" id="world-h" value="1080" min="100" max="16000">
+      </div>
+      <button id="btn-apply-world" style="width:100%;font-size:11px">Apply</button>
+    </div>
+
+    <hr class="sep">
+
+    <div class="checkpoint-block">
+      <h2>Checkpoints</h2>
+      <button id="btn-save-cp" title="Save current viewport as a checkpoint">📍 Save Here</button>
+      <ul id="cp-list">
+        <li class="empty-hint" style="font-size:10px;padding:8px 4px">No checkpoints yet.</li>
+      </ul>
+    </div>
+
+  </aside>
+</div><!-- #main -->
+
+<!-- Hidden file inputs -->
+<input type="file" id="file-img"      accept="image/*" multiple style="display:none">
+<input type="file" id="file-scenario" accept=".json"    style="display:none">
+
+<div id="toast"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
