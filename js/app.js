@@ -621,36 +621,70 @@
   }
 
   // ── Touch support ──────────────────────────────────────────────────────────
-  var _tDist = 0;
+  var _tDist   = 0;
+  var _tCenter = null;   // previous two-finger center in client coords
+
   function onTouchStart(e) {
     e.preventDefault();
     if (e.touches.length === 1) {
+      _tCenter = null;
       var t = e.touches[0];
       onMouseDown({ clientX: t.clientX, clientY: t.clientY,
         button: S.tool === 'pan' ? 1 : 0, altKey: false, preventDefault: function () {} });
     } else if (e.touches.length === 2) {
-      _tDist = tDist(e.touches);
+      // Cancel any ongoing single-touch action before starting pinch
+      S.isDrawing       = false;
+      S.isPanning       = false;
+      S.isDraggingLayer = false;
+      S.lastFogPt       = null;
+      updateCursor();
+      _tDist   = tDist(e.touches);
+      _tCenter = tCenter(e.touches);
     }
   }
+
   function onTouchMove(e) {
     e.preventDefault();
     if (e.touches.length === 1) {
       var t = e.touches[0];
       onMouseMove({ clientX: t.clientX, clientY: t.clientY });
     } else if (e.touches.length === 2) {
-      var nd = tDist(e.touches);
-      var tc = tCenter(e.touches);
-      var s  = getCanvasXY({ clientX: tc.x, clientY: tc.y });
+      var nd  = tDist(e.touches);
+      var nc  = tCenter(e.touches);
+      var newS = getCanvasXY({ clientX: nc.x, clientY: nc.y });
+
+      // Use the previous center's world point as the zoom/pan anchor so that
+      // the same world point stays under the new center (handles simultaneous pan + zoom).
+      var oldS = getCanvasXY({ clientX: _tCenter.x, clientY: _tCenter.y });
+      var w    = screenToWorld(oldS.x, oldS.y);
+
       var f  = nd / _tDist;
       var nz = Math.max(0.04, Math.min(25, S.vp.zoom * f));
-      var w  = screenToWorld(s.x, s.y);
       S.vp.zoom = nz;
-      S.vp.x    = s.x - w.x * nz;
-      S.vp.y    = s.y - w.y * nz;
-      _tDist = nd;
+      S.vp.x    = newS.x - w.x * nz;
+      S.vp.y    = newS.y - w.y * nz;
+
+      _tDist   = nd;
+      _tCenter = nc;
+      throttleBroadcastViewport();
     }
   }
-  function onTouchEnd(e) { if (e.touches.length === 0) onMouseUp(); }
+
+  function onTouchEnd(e) {
+    if (e.touches.length === 0) {
+      _tCenter = null;
+      onMouseUp();
+    } else if (e.touches.length === 1) {
+      // One finger lifted while two were down – stop all actions cleanly.
+      // The remaining finger will only act on the next intentional touchstart.
+      S.isDrawing       = false;
+      S.isPanning       = false;
+      S.isDraggingLayer = false;
+      S.lastFogPt       = null;
+      _tCenter          = null;
+      updateCursor();
+    }
+  }
   function tDist(ts)  { return Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY); }
   function tCenter(ts){ return { x: (ts[0].clientX + ts[1].clientX) / 2, y: (ts[0].clientY + ts[1].clientY) / 2 }; }
 
@@ -1982,6 +2016,39 @@
     });
 
     document.getElementById('btn-save-cp').addEventListener('click', saveCheckpoint);
+
+    // Mobile panel toggles
+    (function () {
+      var backdrop   = document.getElementById('panel-backdrop');
+      var layerPanel = document.getElementById('layer-panel');
+      var toolsPanel = document.getElementById('tools-panel');
+
+      function closePanels() {
+        layerPanel.classList.remove('panel-open');
+        toolsPanel.classList.remove('panel-open');
+        backdrop.classList.remove('active');
+      }
+
+      document.getElementById('btn-toggle-layers').addEventListener('click', function () {
+        var opening = !layerPanel.classList.contains('panel-open');
+        closePanels();
+        if (opening) {
+          layerPanel.classList.add('panel-open');
+          backdrop.classList.add('active');
+        }
+      });
+
+      document.getElementById('btn-toggle-tools').addEventListener('click', function () {
+        var opening = !toolsPanel.classList.contains('panel-open');
+        closePanels();
+        if (opening) {
+          toolsPanel.classList.add('panel-open');
+          backdrop.classList.add('active');
+        }
+      });
+
+      backdrop.addEventListener('click', closePanels);
+    }());
 
     window.addEventListener('keydown', function (e) {
       if (e.target.isContentEditable || e.target.tagName === 'INPUT') return;

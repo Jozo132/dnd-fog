@@ -13,6 +13,7 @@
 <div id="header">
   <h1>🎲 DnD Fog of War</h1>
   <span class="hdr-sep"></span>
+  <button id="btn-toggle-layers" class="panel-toggle" title="Show/Hide Layers panel">☰</button>
   <div class="hdr-btn-group">
     <button id="btn-fit"    title="Fit map to view (F)">⊞ Fit</button>
     <button id="btn-player" class="gold" title="Open projector window for players">📺 Player View</button>
@@ -20,6 +21,7 @@
     <button id="btn-export" title="Export scenario JSON">💾 Export</button>
     <button id="btn-clear"  title="Clear everything" style="color:#f66;border-color:#f66">🗑 Clear</button>
   </div>
+  <button id="btn-toggle-tools" class="panel-toggle" title="Show/Hide Tools panel">⚙</button>
 </div>
 
 <!-- ── MAIN ─────────────────────────────────────────────────── -->
@@ -155,6 +157,8 @@
 
   </aside>
 </div><!-- #main -->
+
+<div id="panel-backdrop"></div>
 
 <!-- Hidden file inputs -->
 <input type="file" id="file-img"      accept="image/*" multiple style="display:none">
