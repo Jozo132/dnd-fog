@@ -2007,7 +2007,6 @@
     if (e.data.type === 'PLAYER_HELLO') {
       // Always respond to PLAYER_HELLO, even when paused (send paused snapshot)
       if (S.paused) {
-        var wasPaused = true;
         S.paused = false;
         broadcastFull();
         S.paused = true;
@@ -2194,7 +2193,7 @@
         mi.onload = (function (t) {
           return function () {
             var c = document.createElement('canvas');
-            c.width = w; c.height = h;
+            c.width = S.world.w; c.height = S.world.h;
             c.getContext('2d').drawImage(this, 0, 0);
             t._mask = c;
           };
