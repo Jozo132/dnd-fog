@@ -1989,11 +1989,11 @@
     var btn = document.getElementById('btn-pause');
     if (S.paused) {
       S.pausedVp = { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom };
-      if (btn) { btn.classList.add('active'); btn.textContent = '⏸ Paused'; }
+      if (btn) { btn.classList.add('active'); btn.innerHTML = '⏸ <span class="btn-label-full">Paused</span>'; }
       toast('Player view paused');
     } else {
       S.pausedVp = null;
-      if (btn) { btn.classList.remove('active'); btn.textContent = '⏸ Pause'; }
+      if (btn) { btn.classList.remove('active'); btn.innerHTML = '⏸ <span class="btn-label-full">Pause</span>'; }
       // Sync everything to player on unpause
       broadcastFull();
       toast('Player view resumed');
@@ -2659,7 +2659,7 @@
       gridOpVal.textContent = gridOpSlider.value + '%';
     });
 
-    // Mobile panel toggles
+    // Mobile/tablet panel toggles
     (function () {
       var backdrop   = document.getElementById('panel-backdrop');
       var layerPanel = document.getElementById('layer-panel');
@@ -2690,6 +2690,11 @@
       });
 
       backdrop.addEventListener('click', closePanels);
+
+      // Close panels when resizing above tablet breakpoint
+      window.addEventListener('resize', function () {
+        if (window.innerWidth > 1024) closePanels();
+      });
     }());
 
     window.addEventListener('keydown', function (e) {
