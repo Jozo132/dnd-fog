@@ -510,7 +510,7 @@
       ctx.font = 'bold ' + Math.max(10, 12 / S.vp.zoom) + 'px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'bottom';
-      ctx.fillText('\uD83D\uDCFA Player View', pcX + 4 / S.vp.zoom, pcY - 3 / S.vp.zoom);
+      ctx.fillText('📺 Player View', pcX + 4 / S.vp.zoom, pcY - 3 / S.vp.zoom);
       ctx.restore();
     }
 
