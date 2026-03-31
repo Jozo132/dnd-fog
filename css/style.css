@@ -278,6 +278,17 @@ body { display: flex; flex-direction: column; }
 .fog-block  { display: flex; flex-direction: column; gap: 4px; }
 .fog-block button { width: 100%; text-align: left; font-size: 12px; }
 
+.torch-block { display: flex; flex-direction: column; gap: 4px; }
+.torch-block > button { width: 100%; text-align: left; font-size: 12px; }
+#torch-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
 hr.sep {
   border: none;
   border-top: 1px solid var(--border);

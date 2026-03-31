@@ -13,6 +13,7 @@
     activeGroupId: null,  // id of the group currently being edited by the DM
     playerGroupId: null,  // id of the group players see (may differ from activeGroupId)
     tokens: [],           // array of { id, name, emoji, x, y, size, visible } – map-wide tokens
+    torches: [],          // array of { id, name, active, groupId, maskURL } – toggleable fog reveal zones
     checkpoints: [],      // array of { id, name, vp:{x,y,zoom} }
     fogSession: { active: false, snapshot: null, groupId: null }, // staged fog painting
     vp: { x: 0, y: 0, zoom: 1 },
@@ -1817,6 +1818,170 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // TORCHES – toggleable fog reveal zones
+  // ─────────────────────────────────────────────────────────────────────────
+  // Each torch stores a "mask" – the revealed area when the torch was created.
+  // When active, the mask is cut out of the fog. When inactive, it's hidden again.
+  //
+  // Workflow: 1) DM reveals an area with fog tools  2) DM clicks "Save as Torch"
+  // which captures the current fog session's revealed area as a torch mask
+  // 3) The torch appears in the list and can be toggled on/off
+
+  function saveTorch() {
+    if (!S.fogSession.active) {
+      toast('First paint some fog, then save as torch');
+      return;
+    }
+    var g = ag();
+    if (!g) return;
+
+    // The mask is the difference between the snapshot (before) and the current fog (after)
+    // We create a mask canvas where white = area that was revealed in this session
+    var mask = document.createElement('canvas');
+    mask.width  = g.fog.canvas.width;
+    mask.height = g.fog.canvas.height;
+    var mCtx = mask.getContext('2d');
+
+    // Draw the snapshot (before) first
+    mCtx.drawImage(S.fogSession.snapshot, 0, 0);
+    // Use 'difference' composite to find pixels that changed
+    mCtx.globalCompositeOperation = 'difference';
+    mCtx.drawImage(g.fog.canvas, 0, 0);
+
+    // Now mask has the difference – non-black pixels are where changes happened
+    // Convert to a clean alpha mask: white where changes exist
+    var imgData = mCtx.getImageData(0, 0, mask.width, mask.height);
+    var d = imgData.data;
+    for (var i = 0; i < d.length; i += 4) {
+      var hasChange = d[i] > 10 || d[i+1] > 10 || d[i+2] > 10;
+      d[i] = d[i+1] = d[i+2] = hasChange ? 255 : 0;
+      d[i+3] = hasChange ? 255 : 0;
+    }
+    mCtx.putImageData(imgData, 0, 0);
+
+    var torch = {
+      id:      'tr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name:    'Torch ' + (S.torches.length + 1),
+      active:  true,
+      groupId: g.id,
+      maskURL: mask.toDataURL('image/png'),
+      _mask:   mask,  // cached canvas (not saved to JSON)
+    };
+    S.torches.push(torch);
+
+    // Commit the fog session (the torch area stays revealed)
+    commitFogSession();
+    rebuildTorchPanel();
+    scheduleSave();
+    toast('Torch "' + torch.name + '" saved');
+  }
+
+  function toggleTorch(id) {
+    var torch = S.torches.find(function (t) { return t.id === id; });
+    if (!torch) return;
+    var g = S.groups.find(function (x) { return x.id === torch.groupId; });
+    if (!g) return;
+
+    // Ensure mask canvas is loaded
+    if (!torch._mask && torch.maskURL) {
+      // Need to load asynchronously; skip this toggle
+      var img = new Image();
+      img.onload = function () {
+        var c = document.createElement('canvas');
+        c.width = g.fog.canvas.width;
+        c.height = g.fog.canvas.height;
+        c.getContext('2d').drawImage(img, 0, 0);
+        torch._mask = c;
+        toggleTorch(id); // retry
+      };
+      img.src = torch.maskURL;
+      return;
+    }
+
+    torch.active = !torch.active;
+
+    if (torch.active) {
+      // Reveal: cut the mask area from fog (destination-out with the mask)
+      g.fog.ctx.save();
+      g.fog.ctx.globalCompositeOperation = 'destination-out';
+      g.fog.ctx.drawImage(torch._mask, 0, 0);
+      g.fog.ctx.restore();
+    } else {
+      // Hide: paint the mask area back as fog (source-over black where mask is white)
+      g.fog.ctx.save();
+      g.fog.ctx.globalCompositeOperation = 'source-over';
+      // We need to paint black only where the mask is white
+      // Create a temp canvas with black fill masked by the torch mask
+      var tmp = document.createElement('canvas');
+      tmp.width = g.fog.canvas.width;
+      tmp.height = g.fog.canvas.height;
+      var tc = tmp.getContext('2d');
+      tc.fillStyle = '#000';
+      tc.fillRect(0, 0, tmp.width, tmp.height);
+      tc.globalCompositeOperation = 'destination-in';
+      tc.drawImage(torch._mask, 0, 0);
+      g.fog.ctx.drawImage(tmp, 0, 0);
+      g.fog.ctx.restore();
+    }
+
+    broadcastFog();
+    rebuildTorchPanel();
+    scheduleSave();
+    toast(torch.active ? 'Torch "' + torch.name + '" lit' : 'Torch "' + torch.name + '" extinguished');
+  }
+
+  function removeTorch(id) {
+    S.torches = S.torches.filter(function (t) { return t.id !== id; });
+    rebuildTorchPanel();
+    scheduleSave();
+  }
+
+  function rebuildTorchPanel() {
+    var ul = document.getElementById('torch-list');
+    if (!ul) return;
+    if (!S.torches.length) {
+      ul.innerHTML = '<li class="empty-hint" style="font-size:10px;padding:8px 4px">No torches yet.</li>';
+      return;
+    }
+    ul.innerHTML = '';
+    S.torches.forEach(function (torch) {
+      var li = document.createElement('li');
+      li.className = 'tk-item' + (torch.active ? '' : ' faded');
+
+      var toggleBtn = document.createElement('button');
+      toggleBtn.className = 'tk-emoji-btn';
+      toggleBtn.title = torch.active ? 'Extinguish (hide area)' : 'Light (reveal area)';
+      toggleBtn.textContent = torch.active ? '🔦' : '🌑';
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'cp-name-edit';
+      nameEl.contentEditable = 'true';
+      nameEl.spellcheck = false;
+      nameEl.textContent = torch.name;
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'cp-del-btn';
+      delBtn.title = 'Delete torch';
+      delBtn.textContent = '\u2715';
+
+      li.appendChild(toggleBtn);
+      li.appendChild(nameEl);
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+
+      toggleBtn.addEventListener('click', function () { toggleTorch(torch.id); });
+      nameEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      });
+      nameEl.addEventListener('blur', function () {
+        torch.name = nameEl.textContent.trim() || torch.name;
+        scheduleSave();
+      });
+      delBtn.addEventListener('click', function () { removeTorch(torch.id); });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // PAUSE MODE – freeze the player view while DM edits freely
   // ─────────────────────────────────────────────────────────────────────────
   function togglePause() {
@@ -1949,6 +2114,9 @@
       tokens:        S.tokens.map(function (tk) {
         return { id: tk.id, name: tk.name, emoji: tk.emoji, x: tk.x, y: tk.y, size: tk.size, visible: tk.visible };
       }),
+      torches:       S.torches.map(function (tr) {
+        return { id: tr.id, name: tr.name, active: tr.active, groupId: tr.groupId, maskURL: tr.maskURL };
+      }),
     };
   }
 
@@ -2009,6 +2177,31 @@
         size:    tk.size || 40,
         visible: tk.visible !== false,
       };
+    });
+
+    S.torches = (data.torches || []).map(function (tr) {
+      var torch = {
+        id:      tr.id || ('tr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+        name:    tr.name || 'Torch',
+        active:  tr.active !== false,
+        groupId: tr.groupId,
+        maskURL: tr.maskURL || null,
+        _mask:   null,
+      };
+      // Load mask image asynchronously
+      if (torch.maskURL) {
+        var mi = new Image();
+        mi.onload = (function (t) {
+          return function () {
+            var c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            c.getContext('2d').drawImage(this, 0, 0);
+            t._mask = c;
+          };
+        }(torch));
+        mi.src = torch.maskURL;
+      }
+      return torch;
     });
 
     var groupDTOs = data.groups;
@@ -2172,6 +2365,7 @@
       rebuildLayerPanel();
       rebuildCheckpointPanel();
       rebuildTokenPanel();
+      rebuildTorchPanel();
       broadcastFull();
       toast('Scenario loaded');
     }
@@ -2190,6 +2384,7 @@
     S.playerGroupId = dg.id;
     S.checkpoints   = [];
     S.tokens        = [];
+    S.torches       = [];
     S.world         = { w: 1920, h: 1080 };
     S.vp            = { x: 0, y: 0, zoom: 1 };
     S.selectedId    = null;
@@ -2199,6 +2394,7 @@
     rebuildLayerPanel();
     rebuildCheckpointPanel();
     rebuildTokenPanel();
+    rebuildTorchPanel();
     fitView();
     broadcastFull();
     try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_KEY_V2); } catch (_) {}
@@ -2240,6 +2436,7 @@
     rebuildLayerPanel();
     rebuildCheckpointPanel();
     rebuildTokenPanel();
+    rebuildTorchPanel();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2357,6 +2554,7 @@
 
     document.getElementById('btn-reveal-all').addEventListener('click', revealAll);
     document.getElementById('btn-hide-all').addEventListener('click', hideAll);
+    document.getElementById('btn-save-torch').addEventListener('click', saveTorch);
 
     document.getElementById('btn-apply-world').addEventListener('click', function () {
       var w = parseInt(document.getElementById('world-w').value);
