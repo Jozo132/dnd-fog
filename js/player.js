@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var canvas, ctx;
+  var canvas, ctx, bc;
 
   var P = {
     world:         { w: 1920, h: 1080 },
@@ -14,6 +14,47 @@
     activeGroupId: null,
     ready:         false,
   };
+
+  // ─── Hatched pattern for out-of-bounds areas ──────────────────────────────
+  var _hatchPattern = null;
+  function getHatchPattern(targetCtx) {
+    if (_hatchPattern) return _hatchPattern;
+    var pc = document.createElement('canvas');
+    pc.width = 16; pc.height = 16;
+    var pctx = pc.getContext('2d');
+    pctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    pctx.lineWidth = 1;
+    pctx.beginPath();
+    pctx.moveTo(0, 16); pctx.lineTo(16, 0);
+    pctx.moveTo(-4, 4); pctx.lineTo(4, -4);
+    pctx.moveTo(12, 20); pctx.lineTo(20, 12);
+    pctx.stroke();
+    _hatchPattern = targetCtx.createPattern(pc, 'repeat');
+    return _hatchPattern;
+  }
+
+  function drawOutOfBoundsHatch(targetCtx, worldW, worldH, vpX, vpY, zoom, canvasW, canvasH) {
+    targetCtx.save();
+    // Clip to everything outside the world rect (in screen space)
+    targetCtx.beginPath();
+    targetCtx.rect(0, 0, canvasW, canvasH);
+    var wx1 = vpX;
+    var wy1 = vpY;
+    var wx2 = vpX + worldW * zoom;
+    var wy2 = vpY + worldH * zoom;
+    targetCtx.moveTo(wx1, wy1);
+    targetCtx.lineTo(wx1, wy2);
+    targetCtx.lineTo(wx2, wy2);
+    targetCtx.lineTo(wx2, wy1);
+    targetCtx.closePath();
+    targetCtx.clip('evenodd');
+
+    targetCtx.fillStyle = '#080818';
+    targetCtx.fillRect(0, 0, canvasW, canvasH);
+    targetCtx.fillStyle = getHatchPattern(targetCtx);
+    targetCtx.fillRect(0, 0, canvasW, canvasH);
+    targetCtx.restore();
+  }
 
   function activeGroup() {
     if (!P.groups.length) return null;
@@ -25,9 +66,12 @@
     ctx    = canvas.getContext('2d');
 
     resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('resize', function () {
+      resizeCanvas();
+      sendPlayerViewport();
+    });
 
-    var bc = new BroadcastChannel('dnd-fog');
+    bc = new BroadcastChannel('dnd-fog');
     bc.onmessage = function (e) {
       var type    = e.data.type;
       var payload = e.data.payload;
@@ -38,6 +82,7 @@
     };
 
     bc.postMessage({ type: 'PLAYER_HELLO' });
+    sendPlayerViewport();
 
     requestAnimationFrame(renderLoop);
   }
@@ -45,6 +90,11 @@
   function resizeCanvas() {
     canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
+  }
+
+  function sendPlayerViewport() {
+    if (!bc) return;
+    bc.postMessage({ type: 'PLAYER_VIEWPORT', payload: { w: canvas.width, h: canvas.height } });
   }
 
   // ─── State application ────────────────────────────────────────────────────
@@ -220,6 +270,9 @@
     }
 
     ctx.restore();
+
+    // Hatched out-of-bounds area (drawn in screen space)
+    drawOutOfBoundsHatch(ctx, P.world.w, P.world.h, P.vp.x, P.vp.y, P.vp.zoom, canvas.width, canvas.height);
   }
 
   document.addEventListener('DOMContentLoaded', init);

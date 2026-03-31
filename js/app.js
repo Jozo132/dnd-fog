@@ -31,6 +31,7 @@
     bc: null,
     saveTimer: null,
     fogBroadcastTimer: null,
+    playerCamera: null, // { w, h } – player canvas dimensions reported via PLAYER_VIEWPORT
   };
 
   /** Return the currently active group (or first as fallback). Returns null if groups is empty. */
@@ -369,6 +370,56 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // HATCHED PATTERN  (for out-of-bounds / undeveloped areas)
+  // ─────────────────────────────────────────────────────────────────────────
+  var _hatchPattern = null;
+  function getHatchPattern(targetCtx) {
+    if (_hatchPattern) return _hatchPattern;
+    var pc = document.createElement('canvas');
+    pc.width = 16; pc.height = 16;
+    var pctx = pc.getContext('2d');
+    pctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    pctx.lineWidth = 1;
+    // diagonal lines
+    pctx.beginPath();
+    pctx.moveTo(0, 16); pctx.lineTo(16, 0);
+    pctx.moveTo(-4, 4); pctx.lineTo(4, -4);
+    pctx.moveTo(12, 20); pctx.lineTo(20, 12);
+    pctx.stroke();
+    _hatchPattern = targetCtx.createPattern(pc, 'repeat');
+    return _hatchPattern;
+  }
+
+  /** Draw hatched fog in the visible area outside the world rectangle (operates in screen space). */
+  function drawOutOfBoundsHatch(targetCtx, worldW, worldH, vpX, vpY, zoom, canvasW, canvasH) {
+    targetCtx.save();
+
+    // Clip to everything outside the world rect using even-odd rule
+    targetCtx.beginPath();
+    targetCtx.rect(0, 0, canvasW, canvasH);                         // full canvas (CW)
+    // World rect in screen space (CCW = subtract)
+    var wx1 = vpX;
+    var wy1 = vpY;
+    var wx2 = vpX + worldW * zoom;
+    var wy2 = vpY + worldH * zoom;
+    targetCtx.moveTo(wx1, wy1);
+    targetCtx.lineTo(wx1, wy2);
+    targetCtx.lineTo(wx2, wy2);
+    targetCtx.lineTo(wx2, wy1);
+    targetCtx.closePath();
+    targetCtx.clip('evenodd');
+
+    // Dark background fill
+    targetCtx.fillStyle = '#0a0a18';
+    targetCtx.fillRect(0, 0, canvasW, canvasH);
+    // Hatching overlay
+    targetCtx.fillStyle = getHatchPattern(targetCtx);
+    targetCtx.fillRect(0, 0, canvasW, canvasH);
+
+    targetCtx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
   function renderLoop() {
@@ -432,6 +483,36 @@
     ctx.globalAlpha = 0.65;
     ctx.drawImage(g.fog.canvas, 0, 0);
     ctx.restore();
+
+    // Hatched out-of-bounds area (drawn in screen space)
+    ctx.restore(); // exit world transform
+    drawOutOfBoundsHatch(ctx, S.world.w, S.world.h, S.vp.x, S.vp.y, S.vp.zoom, canvas.width, canvas.height);
+
+    // Re-enter world transform for player camera, checkpoints, and brush cursor
+    ctx.save();
+    ctx.translate(S.vp.x, S.vp.y);
+    ctx.scale(S.vp.zoom, S.vp.zoom);
+
+    // Player camera indicator (drawn in world space)
+    if (S.playerCamera) {
+      var pcW = S.playerCamera.w / S.vp.zoom;
+      var pcH = S.playerCamera.h / S.vp.zoom;
+      var pcX = (-S.vp.x) / S.vp.zoom;
+      var pcY = (-S.vp.y) / S.vp.zoom;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0, 180, 255, 0.7)';
+      ctx.lineWidth = 2 / S.vp.zoom;
+      ctx.setLineDash([8 / S.vp.zoom, 4 / S.vp.zoom]);
+      ctx.strokeRect(pcX, pcY, pcW, pcH);
+      ctx.setLineDash([]);
+      // Label
+      ctx.fillStyle = 'rgba(0, 180, 255, 0.85)';
+      ctx.font = 'bold ' + Math.max(10, 12 / S.vp.zoom) + 'px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('📺 Player View', pcX + 4 / S.vp.zoom, pcY - 3 / S.vp.zoom);
+      ctx.restore();
+    }
 
     // Checkpoint markers
     renderCheckpointMarkers();
@@ -1449,6 +1530,19 @@
     mctx.strokeStyle = 'rgba(245,166,35,0.88)';
     mctx.lineWidth = 1.5;
     mctx.strokeRect(vpX, vpY, vpW, vpH);
+
+    // Player camera indicator (cyan rectangle)
+    if (S.playerCamera) {
+      var pcX = offX + (-S.vp.x / S.vp.zoom) * scale;
+      var pcY = offY + (-S.vp.y / S.vp.zoom) * scale;
+      var pcW = (S.playerCamera.w / S.vp.zoom) * scale;
+      var pcH = (S.playerCamera.h / S.vp.zoom) * scale;
+      mctx.strokeStyle = 'rgba(0, 180, 255, 0.85)';
+      mctx.lineWidth = 1.5;
+      mctx.setLineDash([3, 2]);
+      mctx.strokeRect(pcX, pcY, pcW, pcH);
+      mctx.setLineDash([]);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1531,6 +1625,9 @@
   // ─────────────────────────────────────────────────────────────────────────
   function onBcMessage(e) {
     if (e.data.type === 'PLAYER_HELLO') broadcastFull();
+    if (e.data.type === 'PLAYER_VIEWPORT') {
+      S.playerCamera = { w: e.data.payload.w, h: e.data.payload.h };
+    }
   }
 
   function broadcastFull() {
