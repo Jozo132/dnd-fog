@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
   <title>DnD Fog of War – DM Panel</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🎲</text></svg>">
   <link rel="stylesheet" href="css/style.css">
@@ -13,16 +13,16 @@
 <div id="header">
   <h1>🎲 DnD Fog of War</h1>
   <span class="hdr-sep"></span>
-  <button id="btn-toggle-layers" class="panel-toggle" title="Show/Hide Layers panel">☰</button>
+  <button id="btn-toggle-layers" class="panel-toggle" title="Show/Hide Layers panel" aria-label="Toggle layers panel">☰</button>
   <div class="hdr-btn-group">
-    <button id="btn-fit"    title="Fit map to view (F)">⊞ Fit</button>
-    <button id="btn-player" class="gold" title="Open projector window for players">📺 Player View</button>
-    <button id="btn-pause" title="Pause/resume player view updates (Q)">⏸ Pause</button>
-    <button id="btn-import" title="Import scenario JSON">📂 Import</button>
-    <button id="btn-export" title="Export scenario JSON">💾 Export</button>
-    <button id="btn-clear"  title="Clear everything" style="color:#f66;border-color:#f66">🗑 Clear</button>
+    <button id="btn-fit"    title="Fit map to view (F)">⊞ <span class="btn-label-full">Fit</span></button>
+    <button id="btn-player" class="gold" title="Open projector window for players">📺 <span class="btn-label-full">Player View</span></button>
+    <button id="btn-pause" title="Pause/resume player view updates (Q)">⏸ <span class="btn-label-full">Pause</span></button>
+    <button id="btn-import" title="Import scenario JSON">📂 <span class="btn-label-full">Import</span></button>
+    <button id="btn-export" title="Export scenario JSON">💾 <span class="btn-label-full">Export</span></button>
+    <button id="btn-clear"  title="Clear everything" style="color:#f66;border-color:#f66">🗑 <span class="btn-label-full">Clear</span></button>
   </div>
-  <button id="btn-toggle-tools" class="panel-toggle" title="Show/Hide Tools panel">⚙</button>
+  <button id="btn-toggle-tools" class="panel-toggle" title="Show/Hide Tools panel" aria-label="Toggle tools panel">⚙</button>
 </div>
 
 <!-- ── MAIN ─────────────────────────────────────────────────── -->
