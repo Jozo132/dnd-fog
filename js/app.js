@@ -12,6 +12,8 @@
     groups: [],           // array of { id, name, visible, fog:{canvas,ctx}, overlay:{canvas,ctx}, layers[] }
     activeGroupId: null,  // id of the group currently being edited by the DM
     playerGroupId: null,  // id of the group players see (may differ from activeGroupId)
+    tokens: [],           // array of { id, name, emoji, x, y, size, visible } – map-wide tokens
+    torches: [],          // array of { id, name, active, groupId, maskURL } – toggleable fog reveal zones
     checkpoints: [],      // array of { id, name, vp:{x,y,zoom} }
     fogSession: { active: false, snapshot: null, groupId: null }, // staged fog painting
     vp: { x: 0, y: 0, zoom: 1 },
@@ -27,8 +29,11 @@
     lastFogPt: null,
     selectedId: null,
     isDraggingLayer: false,
+    draggingTokenId: null,  // id of token being dragged
     dragStart: null,
     bc: null,
+    paused: false,        // when true, broadcasts to player are suspended
+    pausedVp: null,       // snapshot of viewport at time of pause (player keeps seeing this)
     saveTimer: null,
     fogBroadcastTimer: null,
     playerCamera: null, // { w, h } – player canvas dimensions reported via PLAYER_VIEWPORT
@@ -442,8 +447,9 @@
     // Grid
     if (document.getElementById('show-grid').checked) {
       const gs = parseInt(document.getElementById('grid-size').value) || 50;
+      const gOpacity = (parseInt(document.getElementById('grid-opacity').value) || 7) / 100;
       ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      ctx.strokeStyle = 'rgba(255,255,255,' + gOpacity + ')';
       ctx.lineWidth = 1 / S.vp.zoom;
       for (let x = 0; x <= S.world.w; x += gs) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, S.world.h); ctx.stroke();
@@ -517,6 +523,9 @@
     // Checkpoint markers
     renderCheckpointMarkers();
 
+    // Tokens
+    renderTokens();
+
     // Brush cursor
     if (S.cursorWorld && (S.tool === 'reveal' || S.tool === 'hide' || S.tool === 'texture')) {
       ctx.save();
@@ -534,6 +543,19 @@
     }
 
     ctx.restore();
+
+    // Paused indicator
+    if (S.paused) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(233, 69, 96, 0.15)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillStyle = 'rgba(233, 69, 96, 0.9)';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText('⏸ PAUSED', canvas.width - 12, 10);
+      ctx.restore();
+    }
 
     renderMinimap();
   }
@@ -618,6 +640,15 @@
     }
 
     if (S.tool === 'transform') {
+      // Check tokens first (they are on top)
+      var tkHit = hitTestToken(w.x, w.y);
+      if (tkHit) {
+        S.draggingTokenId = tkHit.id;
+        S.dragStart = { mx: w.x, my: w.y, lx: tkHit.x, ly: tkHit.y };
+        S.selectedId = null;
+        rebuildLayerPanel();
+        return;
+      }
       const hit = hitTestLayer(w.x, w.y);
       if (hit) {
         S.selectedId      = hit.id;
@@ -626,6 +657,7 @@
       } else {
         S.selectedId = null;
       }
+      S.draggingTokenId = null;
       rebuildLayerPanel();
     }
   }
@@ -664,18 +696,29 @@
         throttleBroadcastFull();
       }
     }
+
+    if (S.draggingTokenId) {
+      var tk = S.tokens.find(function (t) { return t.id === S.draggingTokenId; });
+      if (tk) {
+        tk.x = Math.round(S.dragStart.lx + (w.x - S.dragStart.mx));
+        tk.y = Math.round(S.dragStart.ly + (w.y - S.dragStart.my));
+        throttleBroadcastFull();
+      }
+    }
   }
 
   function onMouseUp() {
-    const wasDrag = S.isDraggingLayer;
-    const wasTex  = S.isDrawing && S.tool === 'texture';
+    const wasDrag  = S.isDraggingLayer;
+    const wasTex   = S.isDrawing && S.tool === 'texture';
+    const wasToken = !!S.draggingTokenId;
     S.isDrawing       = false;
     S.isPanning       = false;
     S.isDraggingLayer = false;
+    S.draggingTokenId = null;
     S.lastFogPt       = null;
     updateCursor();
     // Fog changes are held in session until the DM clicks "Send to players"
-    if (wasDrag) { broadcastFull();    scheduleSave(); }
+    if (wasDrag || wasToken) { broadcastFull(); scheduleSave(); }
     if (wasTex)  { broadcastOverlay(); scheduleSave(); }
   }
 
@@ -1621,17 +1664,367 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // TOKEN MANAGEMENT – placeable markers visible to players
+  // ─────────────────────────────────────────────────────────────────────────
+  var TOKEN_EMOJIS = ['⚔️','🛡️','👤','👹','💀','🔮','💰','🗝️','📜','🏹','🧪','🕯️','⭐','❗','❓','🚩'];
+
+  function addToken() {
+    var emoji = TOKEN_EMOJIS[S.tokens.length % TOKEN_EMOJIS.length];
+    var center = screenToWorld(canvas.width / 2, canvas.height / 2);
+    var tk = {
+      id:    'tk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name:  'Token ' + (S.tokens.length + 1),
+      emoji: emoji,
+      x:     Math.round(center.x),
+      y:     Math.round(center.y),
+      size:  40,
+      visible: true,
+    };
+    S.tokens.push(tk);
+    rebuildTokenPanel();
+    broadcastFull();
+    scheduleSave();
+    toast('Token "' + tk.name + '" added');
+  }
+
+  function removeToken(id) {
+    S.tokens = S.tokens.filter(function (t) { return t.id !== id; });
+    if (S.draggingTokenId === id) S.draggingTokenId = null;
+    rebuildTokenPanel();
+    broadcastFull();
+    scheduleSave();
+  }
+
+  function hitTestToken(wx, wy) {
+    for (var i = S.tokens.length - 1; i >= 0; i--) {
+      var tk = S.tokens[i];
+      if (!tk.visible) continue;
+      var r = tk.size / 2;
+      if (Math.hypot(wx - tk.x, wy - tk.y) <= r) return tk;
+    }
+    return null;
+  }
+
+  function renderTokens() {
+    S.tokens.forEach(function (tk) {
+      if (!tk.visible) return;
+      var sz = tk.size;
+      // Circle background
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(tk.x, tk.y, sz / 2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(20, 28, 53, 0.85)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(245,166,35,0.8)';
+      ctx.lineWidth = 2 / S.vp.zoom;
+      ctx.stroke();
+      // Emoji
+      ctx.font = Math.round(sz * 0.55) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tk.emoji, tk.x, tk.y);
+      // Label below
+      ctx.font = 'bold ' + Math.max(8, 10 / S.vp.zoom) + 'px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.textBaseline = 'top';
+      ctx.fillText(tk.name, tk.x, tk.y + sz / 2 + 3 / S.vp.zoom);
+      ctx.restore();
+    });
+  }
+
+  function rebuildTokenPanel() {
+    var ul = document.getElementById('token-list');
+    if (!ul) return;
+    if (!S.tokens.length) {
+      ul.innerHTML = '<li class="empty-hint" style="font-size:10px;padding:8px 4px">No tokens yet.</li>';
+      return;
+    }
+    ul.innerHTML = '';
+    S.tokens.forEach(function (tk) {
+      var li = document.createElement('li');
+      li.className = 'tk-item';
+
+      var visBtn = document.createElement('button');
+      visBtn.className = 'vis-btn';
+      visBtn.title = 'Toggle visibility';
+      visBtn.textContent = tk.visible ? '\uD83D\uDC41' : '\uD83D\uDE48';
+      visBtn.style.background = 'none';
+      visBtn.style.border = 'none';
+      visBtn.style.padding = '0';
+      visBtn.style.fontSize = '12px';
+      visBtn.style.width = '18px';
+      visBtn.style.flexShrink = '0';
+
+      var emojiBtn = document.createElement('button');
+      emojiBtn.className = 'tk-emoji-btn';
+      emojiBtn.title = 'Change icon';
+      emojiBtn.textContent = tk.emoji;
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'cp-name-edit';
+      nameEl.contentEditable = 'true';
+      nameEl.spellcheck = false;
+      nameEl.textContent = tk.name;
+
+      var sizeInp = document.createElement('input');
+      sizeInp.type = 'number';
+      sizeInp.className = 'tk-size-inp';
+      sizeInp.value = tk.size;
+      sizeInp.min = '10';
+      sizeInp.max = '200';
+      sizeInp.title = 'Token size (px)';
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'cp-del-btn';
+      delBtn.title = 'Delete token';
+      delBtn.textContent = '\u2715';
+
+      li.appendChild(visBtn);
+      li.appendChild(emojiBtn);
+      li.appendChild(nameEl);
+      li.appendChild(sizeInp);
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+
+      visBtn.addEventListener('click', function () {
+        tk.visible = !tk.visible;
+        rebuildTokenPanel();
+        broadcastFull();
+        scheduleSave();
+      });
+      emojiBtn.addEventListener('click', function () {
+        var idx = TOKEN_EMOJIS.indexOf(tk.emoji);
+        tk.emoji = TOKEN_EMOJIS[(idx + 1) % TOKEN_EMOJIS.length];
+        emojiBtn.textContent = tk.emoji;
+        broadcastFull();
+        scheduleSave();
+      });
+      nameEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      });
+      nameEl.addEventListener('blur', function () {
+        tk.name = nameEl.textContent.trim() || tk.name;
+        broadcastFull();
+        scheduleSave();
+      });
+      sizeInp.addEventListener('change', function () {
+        tk.size = Math.max(10, Math.min(200, parseInt(sizeInp.value) || 40));
+        sizeInp.value = tk.size;
+        broadcastFull();
+        scheduleSave();
+      });
+      delBtn.addEventListener('click', function () { removeToken(tk.id); });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TORCHES – toggleable fog reveal zones
+  // ─────────────────────────────────────────────────────────────────────────
+  // Each torch stores a "mask" – the revealed area when the torch was created.
+  // When active, the mask is cut out of the fog. When inactive, it's hidden again.
+  //
+  // Workflow: 1) DM reveals an area with fog tools  2) DM clicks "Save as Torch"
+  // which captures the current fog session's revealed area as a torch mask
+  // 3) The torch appears in the list and can be toggled on/off
+
+  function saveTorch() {
+    if (!S.fogSession.active) {
+      toast('First paint some fog, then save as torch');
+      return;
+    }
+    var g = ag();
+    if (!g) return;
+
+    // The mask is the difference between the snapshot (before) and the current fog (after)
+    // We create a mask canvas where white = area that was revealed in this session
+    var mask = document.createElement('canvas');
+    mask.width  = g.fog.canvas.width;
+    mask.height = g.fog.canvas.height;
+    var mCtx = mask.getContext('2d');
+
+    // Draw the snapshot (before) first
+    mCtx.drawImage(S.fogSession.snapshot, 0, 0);
+    // Use 'difference' composite to find pixels that changed
+    mCtx.globalCompositeOperation = 'difference';
+    mCtx.drawImage(g.fog.canvas, 0, 0);
+
+    // Now mask has the difference – non-black pixels are where changes happened
+    // Convert to a clean alpha mask: white where changes exist
+    var imgData = mCtx.getImageData(0, 0, mask.width, mask.height);
+    var d = imgData.data;
+    for (var i = 0; i < d.length; i += 4) {
+      var hasChange = d[i] > 10 || d[i+1] > 10 || d[i+2] > 10;
+      d[i] = d[i+1] = d[i+2] = hasChange ? 255 : 0;
+      d[i+3] = hasChange ? 255 : 0;
+    }
+    mCtx.putImageData(imgData, 0, 0);
+
+    var torch = {
+      id:      'tr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name:    'Torch ' + (S.torches.length + 1),
+      active:  true,
+      groupId: g.id,
+      maskURL: mask.toDataURL('image/png'),
+      _mask:   mask,  // cached canvas (not saved to JSON)
+    };
+    S.torches.push(torch);
+
+    // Commit the fog session (the torch area stays revealed)
+    commitFogSession();
+    rebuildTorchPanel();
+    scheduleSave();
+    toast('Torch "' + torch.name + '" saved');
+  }
+
+  function toggleTorch(id) {
+    var torch = S.torches.find(function (t) { return t.id === id; });
+    if (!torch) return;
+    var g = S.groups.find(function (x) { return x.id === torch.groupId; });
+    if (!g) return;
+
+    // Ensure mask canvas is loaded
+    if (!torch._mask && torch.maskURL) {
+      // Need to load asynchronously; skip this toggle
+      var img = new Image();
+      img.onload = function () {
+        var c = document.createElement('canvas');
+        c.width = g.fog.canvas.width;
+        c.height = g.fog.canvas.height;
+        c.getContext('2d').drawImage(img, 0, 0);
+        torch._mask = c;
+        toggleTorch(id); // retry
+      };
+      img.src = torch.maskURL;
+      return;
+    }
+
+    torch.active = !torch.active;
+
+    if (torch.active) {
+      // Reveal: cut the mask area from fog (destination-out with the mask)
+      g.fog.ctx.save();
+      g.fog.ctx.globalCompositeOperation = 'destination-out';
+      g.fog.ctx.drawImage(torch._mask, 0, 0);
+      g.fog.ctx.restore();
+    } else {
+      // Hide: paint the mask area back as fog (source-over black where mask is white)
+      g.fog.ctx.save();
+      g.fog.ctx.globalCompositeOperation = 'source-over';
+      // We need to paint black only where the mask is white
+      // Create a temp canvas with black fill masked by the torch mask
+      var tmp = document.createElement('canvas');
+      tmp.width = g.fog.canvas.width;
+      tmp.height = g.fog.canvas.height;
+      var tc = tmp.getContext('2d');
+      tc.fillStyle = '#000';
+      tc.fillRect(0, 0, tmp.width, tmp.height);
+      tc.globalCompositeOperation = 'destination-in';
+      tc.drawImage(torch._mask, 0, 0);
+      g.fog.ctx.drawImage(tmp, 0, 0);
+      g.fog.ctx.restore();
+    }
+
+    broadcastFog();
+    rebuildTorchPanel();
+    scheduleSave();
+    toast(torch.active ? 'Torch "' + torch.name + '" lit' : 'Torch "' + torch.name + '" extinguished');
+  }
+
+  function removeTorch(id) {
+    S.torches = S.torches.filter(function (t) { return t.id !== id; });
+    rebuildTorchPanel();
+    scheduleSave();
+  }
+
+  function rebuildTorchPanel() {
+    var ul = document.getElementById('torch-list');
+    if (!ul) return;
+    if (!S.torches.length) {
+      ul.innerHTML = '<li class="empty-hint" style="font-size:10px;padding:8px 4px">No torches yet.</li>';
+      return;
+    }
+    ul.innerHTML = '';
+    S.torches.forEach(function (torch) {
+      var li = document.createElement('li');
+      li.className = 'tk-item' + (torch.active ? '' : ' faded');
+
+      var toggleBtn = document.createElement('button');
+      toggleBtn.className = 'tk-emoji-btn';
+      toggleBtn.title = torch.active ? 'Extinguish (hide area)' : 'Light (reveal area)';
+      toggleBtn.textContent = torch.active ? '🔦' : '🌑';
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'cp-name-edit';
+      nameEl.contentEditable = 'true';
+      nameEl.spellcheck = false;
+      nameEl.textContent = torch.name;
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'cp-del-btn';
+      delBtn.title = 'Delete torch';
+      delBtn.textContent = '\u2715';
+
+      li.appendChild(toggleBtn);
+      li.appendChild(nameEl);
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+
+      toggleBtn.addEventListener('click', function () { toggleTorch(torch.id); });
+      nameEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      });
+      nameEl.addEventListener('blur', function () {
+        torch.name = nameEl.textContent.trim() || torch.name;
+        scheduleSave();
+      });
+      delBtn.addEventListener('click', function () { removeTorch(torch.id); });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PAUSE MODE – freeze the player view while DM edits freely
+  // ─────────────────────────────────────────────────────────────────────────
+  function togglePause() {
+    S.paused = !S.paused;
+    var btn = document.getElementById('btn-pause');
+    if (S.paused) {
+      S.pausedVp = { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom };
+      if (btn) { btn.classList.add('active'); btn.textContent = '⏸ Paused'; }
+      toast('Player view paused');
+    } else {
+      S.pausedVp = null;
+      if (btn) { btn.classList.remove('active'); btn.textContent = '⏸ Pause'; }
+      // Sync everything to player on unpause
+      broadcastFull();
+      toast('Player view resumed');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // BROADCAST CHANNEL
   // ─────────────────────────────────────────────────────────────────────────
   function onBcMessage(e) {
-    if (e.data.type === 'PLAYER_HELLO') broadcastFull();
+    if (e.data.type === 'PLAYER_HELLO') {
+      // Always respond to PLAYER_HELLO, even when paused (send paused snapshot)
+      if (S.paused) {
+        S.paused = false;
+        broadcastFull();
+        S.paused = true;
+        // Re-send paused viewport so player stays where they were
+        if (S.pausedVp && S.bc) {
+          S.bc.postMessage({ type: 'VP_UPDATE', payload: { vp: S.pausedVp } });
+        }
+      } else {
+        broadcastFull();
+      }
+    }
     if (e.data.type === 'PLAYER_VIEWPORT') {
       S.playerCamera = { w: e.data.payload.w, h: e.data.payload.h };
     }
   }
 
   function broadcastFull() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     S.bc.postMessage({
       type: 'FULL_STATE',
       payload: {
@@ -1639,12 +2032,15 @@
         vp:            { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom },
         activeGroupId: S.playerGroupId || S.activeGroupId, // send playerGroupId; players render their pinned group
         groups:        S.groups.map(groupToDTO),
+        tokens:        S.tokens.filter(function (t) { return t.visible; }).map(function (t) {
+          return { id: t.id, name: t.name, emoji: t.emoji, x: t.x, y: t.y, size: t.size };
+        }),
       },
     });
   }
 
   function broadcastFog() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     var g = ag();
     S.bc.postMessage({
       type: 'FOG_UPDATE',
@@ -1653,7 +2049,7 @@
   }
 
   function broadcastOverlay() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     var g = ag();
     if (!g || !g.overlay) return;
     S.bc.postMessage({
@@ -1663,7 +2059,7 @@
   }
 
   function broadcastViewport() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     S.bc.postMessage({ type: 'VP_UPDATE', payload: { vp: { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom } } });
   }
 
@@ -1714,6 +2110,12 @@
       checkpoints:   S.checkpoints.map(function (cp) {
         return { id: cp.id, name: cp.name, vp: { x: cp.vp.x, y: cp.vp.y, zoom: cp.vp.zoom } };
       }),
+      tokens:        S.tokens.map(function (tk) {
+        return { id: tk.id, name: tk.name, emoji: tk.emoji, x: tk.x, y: tk.y, size: tk.size, visible: tk.visible };
+      }),
+      torches:       S.torches.map(function (tr) {
+        return { id: tr.id, name: tr.name, active: tr.active, groupId: tr.groupId, maskURL: tr.maskURL };
+      }),
     };
   }
 
@@ -1762,6 +2164,43 @@
         name: cp.name || 'Checkpoint',
         vp:   { x: (cp.vp && cp.vp.x) || 0, y: (cp.vp && cp.vp.y) || 0, zoom: (cp.vp && cp.vp.zoom) || 1 },
       };
+    });
+
+    S.tokens = (data.tokens || []).map(function (tk) {
+      return {
+        id:      tk.id || ('tk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+        name:    tk.name || 'Token',
+        emoji:   tk.emoji || '⚔️',
+        x:       tk.x || 0,
+        y:       tk.y || 0,
+        size:    tk.size || 40,
+        visible: tk.visible !== false,
+      };
+    });
+
+    S.torches = (data.torches || []).map(function (tr) {
+      var torch = {
+        id:      tr.id || ('tr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+        name:    tr.name || 'Torch',
+        active:  tr.active !== false,
+        groupId: tr.groupId,
+        maskURL: tr.maskURL || null,
+        _mask:   null,
+      };
+      // Load mask image asynchronously
+      if (torch.maskURL) {
+        var mi = new Image();
+        mi.onload = (function (t) {
+          return function () {
+            var c = document.createElement('canvas');
+            c.width = S.world.w; c.height = S.world.h;
+            c.getContext('2d').drawImage(this, 0, 0);
+            t._mask = c;
+          };
+        }(torch));
+        mi.src = torch.maskURL;
+      }
+      return torch;
     });
 
     var groupDTOs = data.groups;
@@ -1924,6 +2363,9 @@
       rebuildGroupTabs();
       rebuildLayerPanel();
       rebuildCheckpointPanel();
+      rebuildTokenPanel();
+      rebuildTorchPanel();
+      rebuildProfilePanel();
       broadcastFull();
       toast('Scenario loaded');
     }
@@ -1941,6 +2383,8 @@
     S.activeGroupId = dg.id;
     S.playerGroupId = dg.id;
     S.checkpoints   = [];
+    S.tokens        = [];
+    S.torches       = [];
     S.world         = { w: 1920, h: 1080 };
     S.vp            = { x: 0, y: 0, zoom: 1 };
     S.selectedId    = null;
@@ -1949,6 +2393,8 @@
     rebuildGroupTabs();
     rebuildLayerPanel();
     rebuildCheckpointPanel();
+    rebuildTokenPanel();
+    rebuildTorchPanel();
     fitView();
     broadcastFull();
     try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_KEY_V2); } catch (_) {}
@@ -1961,6 +2407,7 @@
   var SCENARIO_VERSION = 3;
   var LS_KEY    = 'dnd-fog-v3';
   var LS_KEY_V2 = 'dnd-fog-v2';
+  var LS_PROFILES_KEY = 'dnd-fog-profiles'; // { name: scenarioJSON, ... }
 
   function scheduleSave() {
     if (S.saveTimer) clearTimeout(S.saveTimer);
@@ -1989,6 +2436,93 @@
     rebuildGroupTabs();
     rebuildLayerPanel();
     rebuildCheckpointPanel();
+    rebuildTokenPanel();
+    rebuildTorchPanel();
+    rebuildProfilePanel();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SESSION PROFILES – named save slots
+  // ─────────────────────────────────────────────────────────────────────────
+  function getProfiles() {
+    try {
+      var raw = localStorage.getItem(LS_PROFILES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (_) { return {}; }
+  }
+
+  function setProfiles(profiles) {
+    try {
+      localStorage.setItem(LS_PROFILES_KEY, JSON.stringify(profiles));
+    } catch (e) {
+      console.warn('Profile save failed:', e);
+    }
+  }
+
+  function saveProfile() {
+    var name = prompt('Profile name:', 'Session ' + new Date().toLocaleDateString());
+    if (!name) return;
+    var profiles = getProfiles();
+    profiles[name] = buildScenario();
+    setProfiles(profiles);
+    rebuildProfilePanel();
+    toast('Profile "' + name + '" saved');
+  }
+
+  function loadProfile(name) {
+    var profiles = getProfiles();
+    var data = profiles[name];
+    if (!data) { toast('Profile not found'); return; }
+    loadScenario(data);
+    toast('Profile "' + name + '" loaded');
+  }
+
+  function deleteProfile(name) {
+    if (!confirm('Delete profile "' + name + '"?')) return;
+    var profiles = getProfiles();
+    delete profiles[name];
+    setProfiles(profiles);
+    rebuildProfilePanel();
+    toast('Profile "' + name + '" deleted');
+  }
+
+  function rebuildProfilePanel() {
+    var ul = document.getElementById('profile-list');
+    if (!ul) return;
+    var profiles = getProfiles();
+    var names = Object.keys(profiles);
+    if (!names.length) {
+      ul.innerHTML = '<li class="empty-hint" style="font-size:10px;padding:8px 4px">No saved profiles.</li>';
+      return;
+    }
+    ul.innerHTML = '';
+    names.forEach(function (name) {
+      var li = document.createElement('li');
+      li.className = 'cp-item';
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'cp-name-edit';
+      nameEl.textContent = name;
+      nameEl.style.cursor = 'default';
+
+      var loadBtn = document.createElement('button');
+      loadBtn.className = 'cp-go-btn';
+      loadBtn.title = 'Load this profile';
+      loadBtn.textContent = '\u25B6';
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'cp-del-btn';
+      delBtn.title = 'Delete profile';
+      delBtn.textContent = '\u2715';
+
+      li.appendChild(nameEl);
+      li.appendChild(loadBtn);
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+
+      loadBtn.addEventListener('click', function () { loadProfile(name); });
+      delBtn.addEventListener('click', function () { deleteProfile(name); });
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2008,9 +2542,11 @@
   function bindUIEvents() {
     document.getElementById('btn-fit').addEventListener('click', fitView);
     document.getElementById('btn-player').addEventListener('click', openPlayerView);
+    document.getElementById('btn-pause').addEventListener('click', togglePause);
     document.getElementById('btn-import').addEventListener('click', function () { document.getElementById('file-scenario').click(); });
     document.getElementById('btn-export').addEventListener('click', exportScenario);
     document.getElementById('btn-clear').addEventListener('click', clearScenario);
+    document.getElementById('btn-save-profile').addEventListener('click', saveProfile);
 
     document.getElementById('file-img').addEventListener('change', function (e) {
       processImageFiles(e.target.files);
@@ -2105,6 +2641,7 @@
 
     document.getElementById('btn-reveal-all').addEventListener('click', revealAll);
     document.getElementById('btn-hide-all').addEventListener('click', hideAll);
+    document.getElementById('btn-save-torch').addEventListener('click', saveTorch);
 
     document.getElementById('btn-apply-world').addEventListener('click', function () {
       var w = parseInt(document.getElementById('world-w').value);
@@ -2113,6 +2650,14 @@
     });
 
     document.getElementById('btn-save-cp').addEventListener('click', saveCheckpoint);
+    document.getElementById('btn-add-token').addEventListener('click', addToken);
+
+    // Grid opacity slider
+    var gridOpSlider = document.getElementById('grid-opacity');
+    var gridOpVal    = document.getElementById('grid-opacity-val');
+    gridOpSlider.addEventListener('input', function () {
+      gridOpVal.textContent = gridOpSlider.value + '%';
+    });
 
     // Mobile panel toggles
     (function () {
@@ -2163,6 +2708,7 @@
         updateCursor();
       }
       if (e.key === 'f' || e.key === 'F') fitView();
+      if (e.key === 'q' || e.key === 'Q') togglePause();
       if (e.key === 'm' || e.key === 'M') {
         var mmBtn = document.getElementById('btn-minimap-toggle');
         if (mmBtn) mmBtn.click();

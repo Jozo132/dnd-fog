@@ -17,6 +17,7 @@
   <div class="hdr-btn-group">
     <button id="btn-fit"    title="Fit map to view (F)">⊞ Fit</button>
     <button id="btn-player" class="gold" title="Open projector window for players">📺 Player View</button>
+    <button id="btn-pause" title="Pause/resume player view updates (Q)">⏸ Pause</button>
     <button id="btn-import" title="Import scenario JSON">📂 Import</button>
     <button id="btn-export" title="Export scenario JSON">💾 Export</button>
     <button id="btn-clear"  title="Clear everything" style="color:#f66;border-color:#f66">🗑 Clear</button>
@@ -29,6 +30,14 @@
 
   <!-- LEFT: Layer Panel -->
   <aside id="layer-panel">
+    <!-- Profile section -->
+    <div class="panel-title">
+      <h2>Profiles</h2>
+      <button id="btn-save-profile" title="Save current session as a named profile">💾 Save</button>
+    </div>
+    <ul id="profile-list">
+      <li class="empty-hint" style="font-size:10px;padding:8px 4px">No saved profiles.</li>
+    </ul>
     <!-- Group section -->
     <div class="panel-title">
       <h2>Groups</h2>
@@ -104,6 +113,16 @@
 
     <hr class="sep">
 
+    <div class="torch-block">
+      <h2>Torches</h2>
+      <button id="btn-save-torch" title="Save current fog reveal as a toggleable torch zone">🔦 Save as Torch</button>
+      <ul id="torch-list">
+        <li class="empty-hint" style="font-size:10px;padding:8px 4px">No torches yet.</li>
+      </ul>
+    </div>
+
+    <hr class="sep">
+
     <div class="texture-block">
       <h2>Textures</h2>
       <div id="texture-palette">
@@ -131,6 +150,11 @@
         <input type="number" id="grid-size" value="50" min="5" max="1000" style="width:58px">
         <span>px</span>
       </div>
+      <div class="brush-row" style="margin-top:2px">
+        <span>Opacity</span>
+        <span id="grid-opacity-val">7%</span>
+      </div>
+      <input type="range" id="grid-opacity" min="1" max="100" value="7">
     </div>
 
     <hr class="sep">
@@ -152,6 +176,16 @@
       <button id="btn-save-cp" title="Save current viewport as a checkpoint">📍 Save Here</button>
       <ul id="cp-list">
         <li class="empty-hint" style="font-size:10px;padding:8px 4px">No checkpoints yet.</li>
+      </ul>
+    </div>
+
+    <hr class="sep">
+
+    <div class="token-block">
+      <h2>Tokens</h2>
+      <button id="btn-add-token" title="Add a token marker to the map">📌 Add Token</button>
+      <ul id="token-list">
+        <li class="empty-hint" style="font-size:10px;padding:8px 4px">No tokens yet.</li>
       </ul>
     </div>
 

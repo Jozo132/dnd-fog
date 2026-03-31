@@ -49,6 +49,10 @@ button:disabled { opacity: 0.35; pointer-events: none; }
 button.active { background: var(--accent); border-color: var(--accent); }
 button.gold   { background: var(--bg-hover); border-color: var(--gold); color: var(--gold); }
 button.gold:hover { background: var(--gold); color: #000; }
+#btn-pause       { border-color: #e94560; color: #e94560; }
+#btn-pause:hover { background: #e94560; color: #fff; }
+#btn-pause.active { background: #e94560; color: #fff; border-color: #e94560; animation: pulse-pause 1.5s infinite; }
+@keyframes pulse-pause { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
 
 /* ── INPUTS ── */
 input[type="number"],
@@ -274,6 +278,17 @@ body { display: flex; flex-direction: column; }
 .fog-block  { display: flex; flex-direction: column; gap: 4px; }
 .fog-block button { width: 100%; text-align: left; font-size: 12px; }
 
+.torch-block { display: flex; flex-direction: column; gap: 4px; }
+.torch-block > button { width: 100%; text-align: left; font-size: 12px; }
+#torch-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
 hr.sep {
   border: none;
   border-top: 1px solid var(--border);
@@ -308,6 +323,19 @@ hr.sep {
   flex-direction: column;
   border-top: 1px solid var(--border);
 }
+
+/* PROFILES */
+#profile-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  max-height: 100px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+#profile-list:empty { display: none; }
 
 /* GROUP TABS */
 #group-tabs {
@@ -373,6 +401,39 @@ hr.sep {
 /* CHECKPOINTS */
 .checkpoint-block { display: flex; flex-direction: column; gap: 4px; }
 .checkpoint-block > button { width: 100%; text-align: left; font-size: 12px; }
+
+/* TOKENS */
+.token-block { display: flex; flex-direction: column; gap: 4px; }
+.token-block > button { width: 100%; text-align: left; font-size: 12px; }
+
+#token-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.tk-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-item);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 5px;
+}
+.tk-emoji-btn {
+  background: none; border: none;
+  padding: 0 2px; font-size: 14px;
+  cursor: pointer; flex-shrink: 0;
+}
+.tk-emoji-btn:hover { background: none; opacity: 0.7; }
+.tk-size-inp {
+  width: 38px !important;
+  font-size: 10px !important;
+  flex-shrink: 0;
+}
 
 #cp-list {
   list-style: none;
