@@ -12,6 +12,7 @@
     vp:            { x: 0, y: 0, zoom: 1 },
     groups:        [],   // { id, visible, layers:[], fogImg:null, overlayImg:null }
     activeGroupId: null,
+    tokens:        [],   // { id, name, emoji, x, y, size }
     ready:         false,
   };
 
@@ -106,6 +107,7 @@
     P.vp.y        = payload.vp.y;
     P.vp.zoom     = payload.vp.zoom;
     P.activeGroupId = payload.activeGroupId;
+    P.tokens = payload.tokens || [];
 
     // Preserve existing fogImg for any group that hasn't changed
     var existingGroups = {};
@@ -268,6 +270,28 @@
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, P.world.w, P.world.h);
     }
+
+    // Tokens – rendered on top of fog so they are always visible
+    P.tokens.forEach(function (tk) {
+      var sz = tk.size || 40;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(tk.x, tk.y, sz / 2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(20, 28, 53, 0.85)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(245,166,35,0.8)';
+      ctx.lineWidth = 2 / P.vp.zoom;
+      ctx.stroke();
+      ctx.font = Math.round(sz * 0.55) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tk.emoji, tk.x, tk.y);
+      ctx.font = 'bold ' + Math.max(8, 10 / P.vp.zoom) + 'px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.textBaseline = 'top';
+      ctx.fillText(tk.name, tk.x, tk.y + sz / 2 + 3 / P.vp.zoom);
+      ctx.restore();
+    });
 
     ctx.restore();
 

@@ -378,6 +378,39 @@ hr.sep {
 .checkpoint-block { display: flex; flex-direction: column; gap: 4px; }
 .checkpoint-block > button { width: 100%; text-align: left; font-size: 12px; }
 
+/* TOKENS */
+.token-block { display: flex; flex-direction: column; gap: 4px; }
+.token-block > button { width: 100%; text-align: left; font-size: 12px; }
+
+#token-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.tk-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-item);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 5px;
+}
+.tk-emoji-btn {
+  background: none; border: none;
+  padding: 0 2px; font-size: 14px;
+  cursor: pointer; flex-shrink: 0;
+}
+.tk-emoji-btn:hover { background: none; opacity: 0.7; }
+.tk-size-inp {
+  width: 38px !important;
+  font-size: 10px !important;
+  flex-shrink: 0;
+}
+
 #cp-list {
   list-style: none;
   display: flex;

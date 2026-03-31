@@ -12,6 +12,7 @@
     groups: [],           // array of { id, name, visible, fog:{canvas,ctx}, overlay:{canvas,ctx}, layers[] }
     activeGroupId: null,  // id of the group currently being edited by the DM
     playerGroupId: null,  // id of the group players see (may differ from activeGroupId)
+    tokens: [],           // array of { id, name, emoji, x, y, size, visible } – map-wide tokens
     checkpoints: [],      // array of { id, name, vp:{x,y,zoom} }
     fogSession: { active: false, snapshot: null, groupId: null }, // staged fog painting
     vp: { x: 0, y: 0, zoom: 1 },
@@ -27,6 +28,7 @@
     lastFogPt: null,
     selectedId: null,
     isDraggingLayer: false,
+    draggingTokenId: null,  // id of token being dragged
     dragStart: null,
     bc: null,
     paused: false,        // when true, broadcasts to player are suspended
@@ -520,6 +522,9 @@
     // Checkpoint markers
     renderCheckpointMarkers();
 
+    // Tokens
+    renderTokens();
+
     // Brush cursor
     if (S.cursorWorld && (S.tool === 'reveal' || S.tool === 'hide' || S.tool === 'texture')) {
       ctx.save();
@@ -634,6 +639,15 @@
     }
 
     if (S.tool === 'transform') {
+      // Check tokens first (they are on top)
+      var tkHit = hitTestToken(w.x, w.y);
+      if (tkHit) {
+        S.draggingTokenId = tkHit.id;
+        S.dragStart = { mx: w.x, my: w.y, lx: tkHit.x, ly: tkHit.y };
+        S.selectedId = null;
+        rebuildLayerPanel();
+        return;
+      }
       const hit = hitTestLayer(w.x, w.y);
       if (hit) {
         S.selectedId      = hit.id;
@@ -642,6 +656,7 @@
       } else {
         S.selectedId = null;
       }
+      S.draggingTokenId = null;
       rebuildLayerPanel();
     }
   }
@@ -680,18 +695,29 @@
         throttleBroadcastFull();
       }
     }
+
+    if (S.draggingTokenId) {
+      var tk = S.tokens.find(function (t) { return t.id === S.draggingTokenId; });
+      if (tk) {
+        tk.x = Math.round(S.dragStart.lx + (w.x - S.dragStart.mx));
+        tk.y = Math.round(S.dragStart.ly + (w.y - S.dragStart.my));
+        throttleBroadcastFull();
+      }
+    }
   }
 
   function onMouseUp() {
-    const wasDrag = S.isDraggingLayer;
-    const wasTex  = S.isDrawing && S.tool === 'texture';
+    const wasDrag  = S.isDraggingLayer;
+    const wasTex   = S.isDrawing && S.tool === 'texture';
+    const wasToken = !!S.draggingTokenId;
     S.isDrawing       = false;
     S.isPanning       = false;
     S.isDraggingLayer = false;
+    S.draggingTokenId = null;
     S.lastFogPt       = null;
     updateCursor();
     // Fog changes are held in session until the DM clicks "Send to players"
-    if (wasDrag) { broadcastFull();    scheduleSave(); }
+    if (wasDrag || wasToken) { broadcastFull(); scheduleSave(); }
     if (wasTex)  { broadcastOverlay(); scheduleSave(); }
   }
 
@@ -1637,6 +1663,160 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // TOKEN MANAGEMENT – placeable markers visible to players
+  // ─────────────────────────────────────────────────────────────────────────
+  var TOKEN_EMOJIS = ['⚔️','🛡️','👤','👹','💀','🔮','💰','🗝️','📜','🏹','🧪','🕯️','⭐','❗','❓','🚩'];
+
+  function addToken() {
+    var emoji = TOKEN_EMOJIS[S.tokens.length % TOKEN_EMOJIS.length];
+    var center = screenToWorld(canvas.width / 2, canvas.height / 2);
+    var tk = {
+      id:    'tk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name:  'Token ' + (S.tokens.length + 1),
+      emoji: emoji,
+      x:     Math.round(center.x),
+      y:     Math.round(center.y),
+      size:  40,
+      visible: true,
+    };
+    S.tokens.push(tk);
+    rebuildTokenPanel();
+    broadcastFull();
+    scheduleSave();
+    toast('Token "' + tk.name + '" added');
+  }
+
+  function removeToken(id) {
+    S.tokens = S.tokens.filter(function (t) { return t.id !== id; });
+    if (S.draggingTokenId === id) S.draggingTokenId = null;
+    rebuildTokenPanel();
+    broadcastFull();
+    scheduleSave();
+  }
+
+  function hitTestToken(wx, wy) {
+    for (var i = S.tokens.length - 1; i >= 0; i--) {
+      var tk = S.tokens[i];
+      if (!tk.visible) continue;
+      var r = tk.size / 2;
+      if (Math.hypot(wx - tk.x, wy - tk.y) <= r) return tk;
+    }
+    return null;
+  }
+
+  function renderTokens() {
+    S.tokens.forEach(function (tk) {
+      if (!tk.visible) return;
+      var sz = tk.size;
+      // Circle background
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(tk.x, tk.y, sz / 2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(20, 28, 53, 0.85)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(245,166,35,0.8)';
+      ctx.lineWidth = 2 / S.vp.zoom;
+      ctx.stroke();
+      // Emoji
+      ctx.font = Math.round(sz * 0.55) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tk.emoji, tk.x, tk.y);
+      // Label below
+      ctx.font = 'bold ' + Math.max(8, 10 / S.vp.zoom) + 'px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.textBaseline = 'top';
+      ctx.fillText(tk.name, tk.x, tk.y + sz / 2 + 3 / S.vp.zoom);
+      ctx.restore();
+    });
+  }
+
+  function rebuildTokenPanel() {
+    var ul = document.getElementById('token-list');
+    if (!ul) return;
+    if (!S.tokens.length) {
+      ul.innerHTML = '<li class="empty-hint" style="font-size:10px;padding:8px 4px">No tokens yet.</li>';
+      return;
+    }
+    ul.innerHTML = '';
+    S.tokens.forEach(function (tk) {
+      var li = document.createElement('li');
+      li.className = 'tk-item';
+
+      var visBtn = document.createElement('button');
+      visBtn.className = 'vis-btn';
+      visBtn.title = 'Toggle visibility';
+      visBtn.textContent = tk.visible ? '\uD83D\uDC41' : '\uD83D\uDE48';
+      visBtn.style.background = 'none';
+      visBtn.style.border = 'none';
+      visBtn.style.padding = '0';
+      visBtn.style.fontSize = '12px';
+      visBtn.style.width = '18px';
+      visBtn.style.flexShrink = '0';
+
+      var emojiBtn = document.createElement('button');
+      emojiBtn.className = 'tk-emoji-btn';
+      emojiBtn.title = 'Change icon';
+      emojiBtn.textContent = tk.emoji;
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'cp-name-edit';
+      nameEl.contentEditable = 'true';
+      nameEl.spellcheck = false;
+      nameEl.textContent = tk.name;
+
+      var sizeInp = document.createElement('input');
+      sizeInp.type = 'number';
+      sizeInp.className = 'tk-size-inp';
+      sizeInp.value = tk.size;
+      sizeInp.min = '10';
+      sizeInp.max = '200';
+      sizeInp.title = 'Token size (px)';
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'cp-del-btn';
+      delBtn.title = 'Delete token';
+      delBtn.textContent = '\u2715';
+
+      li.appendChild(visBtn);
+      li.appendChild(emojiBtn);
+      li.appendChild(nameEl);
+      li.appendChild(sizeInp);
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+
+      visBtn.addEventListener('click', function () {
+        tk.visible = !tk.visible;
+        rebuildTokenPanel();
+        broadcastFull();
+        scheduleSave();
+      });
+      emojiBtn.addEventListener('click', function () {
+        var idx = TOKEN_EMOJIS.indexOf(tk.emoji);
+        tk.emoji = TOKEN_EMOJIS[(idx + 1) % TOKEN_EMOJIS.length];
+        emojiBtn.textContent = tk.emoji;
+        broadcastFull();
+        scheduleSave();
+      });
+      nameEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      });
+      nameEl.addEventListener('blur', function () {
+        tk.name = nameEl.textContent.trim() || tk.name;
+        broadcastFull();
+        scheduleSave();
+      });
+      sizeInp.addEventListener('change', function () {
+        tk.size = Math.max(10, Math.min(200, parseInt(sizeInp.value) || 40));
+        sizeInp.value = tk.size;
+        broadcastFull();
+        scheduleSave();
+      });
+      delBtn.addEventListener('click', function () { removeToken(tk.id); });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // PAUSE MODE – freeze the player view while DM edits freely
   // ─────────────────────────────────────────────────────────────────────────
   function togglePause() {
@@ -1688,6 +1868,9 @@
         vp:            { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom },
         activeGroupId: S.playerGroupId || S.activeGroupId, // send playerGroupId; players render their pinned group
         groups:        S.groups.map(groupToDTO),
+        tokens:        S.tokens.filter(function (t) { return t.visible; }).map(function (t) {
+          return { id: t.id, name: t.name, emoji: t.emoji, x: t.x, y: t.y, size: t.size };
+        }),
       },
     });
   }
@@ -1763,6 +1946,9 @@
       checkpoints:   S.checkpoints.map(function (cp) {
         return { id: cp.id, name: cp.name, vp: { x: cp.vp.x, y: cp.vp.y, zoom: cp.vp.zoom } };
       }),
+      tokens:        S.tokens.map(function (tk) {
+        return { id: tk.id, name: tk.name, emoji: tk.emoji, x: tk.x, y: tk.y, size: tk.size, visible: tk.visible };
+      }),
     };
   }
 
@@ -1810,6 +1996,18 @@
         id:   cp.id || ('cp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
         name: cp.name || 'Checkpoint',
         vp:   { x: (cp.vp && cp.vp.x) || 0, y: (cp.vp && cp.vp.y) || 0, zoom: (cp.vp && cp.vp.zoom) || 1 },
+      };
+    });
+
+    S.tokens = (data.tokens || []).map(function (tk) {
+      return {
+        id:      tk.id || ('tk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+        name:    tk.name || 'Token',
+        emoji:   tk.emoji || '⚔️',
+        x:       tk.x || 0,
+        y:       tk.y || 0,
+        size:    tk.size || 40,
+        visible: tk.visible !== false,
       };
     });
 
@@ -1973,6 +2171,7 @@
       rebuildGroupTabs();
       rebuildLayerPanel();
       rebuildCheckpointPanel();
+      rebuildTokenPanel();
       broadcastFull();
       toast('Scenario loaded');
     }
@@ -1990,6 +2189,7 @@
     S.activeGroupId = dg.id;
     S.playerGroupId = dg.id;
     S.checkpoints   = [];
+    S.tokens        = [];
     S.world         = { w: 1920, h: 1080 };
     S.vp            = { x: 0, y: 0, zoom: 1 };
     S.selectedId    = null;
@@ -1998,6 +2198,7 @@
     rebuildGroupTabs();
     rebuildLayerPanel();
     rebuildCheckpointPanel();
+    rebuildTokenPanel();
     fitView();
     broadcastFull();
     try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_KEY_V2); } catch (_) {}
@@ -2038,6 +2239,7 @@
     rebuildGroupTabs();
     rebuildLayerPanel();
     rebuildCheckpointPanel();
+    rebuildTokenPanel();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2163,6 +2365,7 @@
     });
 
     document.getElementById('btn-save-cp').addEventListener('click', saveCheckpoint);
+    document.getElementById('btn-add-token').addEventListener('click', addToken);
 
     // Grid opacity slider
     var gridOpSlider = document.getElementById('grid-opacity');
