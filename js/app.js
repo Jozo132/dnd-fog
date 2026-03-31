@@ -2366,6 +2366,7 @@
       rebuildCheckpointPanel();
       rebuildTokenPanel();
       rebuildTorchPanel();
+      rebuildProfilePanel();
       broadcastFull();
       toast('Scenario loaded');
     }
@@ -2407,6 +2408,7 @@
   var SCENARIO_VERSION = 3;
   var LS_KEY    = 'dnd-fog-v3';
   var LS_KEY_V2 = 'dnd-fog-v2';
+  var LS_PROFILES_KEY = 'dnd-fog-profiles'; // { name: scenarioJSON, ... }
 
   function scheduleSave() {
     if (S.saveTimer) clearTimeout(S.saveTimer);
@@ -2437,6 +2439,91 @@
     rebuildCheckpointPanel();
     rebuildTokenPanel();
     rebuildTorchPanel();
+    rebuildProfilePanel();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SESSION PROFILES – named save slots
+  // ─────────────────────────────────────────────────────────────────────────
+  function getProfiles() {
+    try {
+      var raw = localStorage.getItem(LS_PROFILES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (_) { return {}; }
+  }
+
+  function setProfiles(profiles) {
+    try {
+      localStorage.setItem(LS_PROFILES_KEY, JSON.stringify(profiles));
+    } catch (e) {
+      console.warn('Profile save failed:', e);
+    }
+  }
+
+  function saveProfile() {
+    var name = prompt('Profile name:', 'Session ' + new Date().toLocaleDateString());
+    if (!name) return;
+    var profiles = getProfiles();
+    profiles[name] = buildScenario();
+    setProfiles(profiles);
+    rebuildProfilePanel();
+    toast('Profile "' + name + '" saved');
+  }
+
+  function loadProfile(name) {
+    var profiles = getProfiles();
+    var data = profiles[name];
+    if (!data) { toast('Profile not found'); return; }
+    loadScenario(data);
+    toast('Profile "' + name + '" loaded');
+  }
+
+  function deleteProfile(name) {
+    if (!confirm('Delete profile "' + name + '"?')) return;
+    var profiles = getProfiles();
+    delete profiles[name];
+    setProfiles(profiles);
+    rebuildProfilePanel();
+    toast('Profile "' + name + '" deleted');
+  }
+
+  function rebuildProfilePanel() {
+    var ul = document.getElementById('profile-list');
+    if (!ul) return;
+    var profiles = getProfiles();
+    var names = Object.keys(profiles);
+    if (!names.length) {
+      ul.innerHTML = '<li class="empty-hint" style="font-size:10px;padding:8px 4px">No saved profiles.</li>';
+      return;
+    }
+    ul.innerHTML = '';
+    names.forEach(function (name) {
+      var li = document.createElement('li');
+      li.className = 'cp-item';
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'cp-name-edit';
+      nameEl.textContent = name;
+      nameEl.style.cursor = 'default';
+
+      var loadBtn = document.createElement('button');
+      loadBtn.className = 'cp-go-btn';
+      loadBtn.title = 'Load this profile';
+      loadBtn.textContent = '\u25B6';
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'cp-del-btn';
+      delBtn.title = 'Delete profile';
+      delBtn.textContent = '\u2715';
+
+      li.appendChild(nameEl);
+      li.appendChild(loadBtn);
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+
+      loadBtn.addEventListener('click', function () { loadProfile(name); });
+      delBtn.addEventListener('click', function () { deleteProfile(name); });
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2460,6 +2547,7 @@
     document.getElementById('btn-import').addEventListener('click', function () { document.getElementById('file-scenario').click(); });
     document.getElementById('btn-export').addEventListener('click', exportScenario);
     document.getElementById('btn-clear').addEventListener('click', clearScenario);
+    document.getElementById('btn-save-profile').addEventListener('click', saveProfile);
 
     document.getElementById('file-img').addEventListener('change', function (e) {
       processImageFiles(e.target.files);

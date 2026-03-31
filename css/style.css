@@ -324,6 +324,19 @@ hr.sep {
   border-top: 1px solid var(--border);
 }
 
+/* PROFILES */
+#profile-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  max-height: 100px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+#profile-list:empty { display: none; }
+
 /* GROUP TABS */
 #group-tabs {
   display: flex;
