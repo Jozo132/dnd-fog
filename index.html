@@ -17,6 +17,7 @@
   <div class="hdr-btn-group">
     <button id="btn-fit"    title="Fit map to view (F)">⊞ Fit</button>
     <button id="btn-player" class="gold" title="Open projector window for players">📺 Player View</button>
+    <button id="btn-pause" title="Pause/resume player view updates (Q)">⏸ Pause</button>
     <button id="btn-import" title="Import scenario JSON">📂 Import</button>
     <button id="btn-export" title="Export scenario JSON">💾 Export</button>
     <button id="btn-clear"  title="Clear everything" style="color:#f66;border-color:#f66">🗑 Clear</button>
@@ -131,6 +132,11 @@
         <input type="number" id="grid-size" value="50" min="5" max="1000" style="width:58px">
         <span>px</span>
       </div>
+      <div class="brush-row" style="margin-top:2px">
+        <span>Opacity</span>
+        <span id="grid-opacity-val">7%</span>
+      </div>
+      <input type="range" id="grid-opacity" min="1" max="100" value="7">
     </div>
 
     <hr class="sep">

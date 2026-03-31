@@ -29,6 +29,8 @@
     isDraggingLayer: false,
     dragStart: null,
     bc: null,
+    paused: false,        // when true, broadcasts to player are suspended
+    pausedVp: null,       // snapshot of viewport at time of pause (player keeps seeing this)
     saveTimer: null,
     fogBroadcastTimer: null,
     playerCamera: null, // { w, h } – player canvas dimensions reported via PLAYER_VIEWPORT
@@ -442,8 +444,9 @@
     // Grid
     if (document.getElementById('show-grid').checked) {
       const gs = parseInt(document.getElementById('grid-size').value) || 50;
+      const gOpacity = (parseInt(document.getElementById('grid-opacity').value) || 7) / 100;
       ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      ctx.strokeStyle = 'rgba(255,255,255,' + gOpacity + ')';
       ctx.lineWidth = 1 / S.vp.zoom;
       for (let x = 0; x <= S.world.w; x += gs) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, S.world.h); ctx.stroke();
@@ -534,6 +537,19 @@
     }
 
     ctx.restore();
+
+    // Paused indicator
+    if (S.paused) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(233, 69, 96, 0.15)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillStyle = 'rgba(233, 69, 96, 0.9)';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText('⏸ PAUSED', canvas.width - 12, 10);
+      ctx.restore();
+    }
 
     renderMinimap();
   }
@@ -1621,17 +1637,50 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // PAUSE MODE – freeze the player view while DM edits freely
+  // ─────────────────────────────────────────────────────────────────────────
+  function togglePause() {
+    S.paused = !S.paused;
+    var btn = document.getElementById('btn-pause');
+    if (S.paused) {
+      S.pausedVp = { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom };
+      if (btn) { btn.classList.add('active'); btn.textContent = '⏸ Paused'; }
+      toast('Player view paused');
+    } else {
+      S.pausedVp = null;
+      if (btn) { btn.classList.remove('active'); btn.textContent = '⏸ Pause'; }
+      // Sync everything to player on unpause
+      broadcastFull();
+      toast('Player view resumed');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // BROADCAST CHANNEL
   // ─────────────────────────────────────────────────────────────────────────
   function onBcMessage(e) {
-    if (e.data.type === 'PLAYER_HELLO') broadcastFull();
+    if (e.data.type === 'PLAYER_HELLO') {
+      // Always respond to PLAYER_HELLO, even when paused (send paused snapshot)
+      if (S.paused) {
+        var wasPaused = true;
+        S.paused = false;
+        broadcastFull();
+        S.paused = true;
+        // Re-send paused viewport so player stays where they were
+        if (S.pausedVp && S.bc) {
+          S.bc.postMessage({ type: 'VP_UPDATE', payload: { vp: S.pausedVp } });
+        }
+      } else {
+        broadcastFull();
+      }
+    }
     if (e.data.type === 'PLAYER_VIEWPORT') {
       S.playerCamera = { w: e.data.payload.w, h: e.data.payload.h };
     }
   }
 
   function broadcastFull() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     S.bc.postMessage({
       type: 'FULL_STATE',
       payload: {
@@ -1644,7 +1693,7 @@
   }
 
   function broadcastFog() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     var g = ag();
     S.bc.postMessage({
       type: 'FOG_UPDATE',
@@ -1653,7 +1702,7 @@
   }
 
   function broadcastOverlay() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     var g = ag();
     if (!g || !g.overlay) return;
     S.bc.postMessage({
@@ -1663,7 +1712,7 @@
   }
 
   function broadcastViewport() {
-    if (!S.bc) return;
+    if (!S.bc || S.paused) return;
     S.bc.postMessage({ type: 'VP_UPDATE', payload: { vp: { x: S.vp.x, y: S.vp.y, zoom: S.vp.zoom } } });
   }
 
@@ -2008,6 +2057,7 @@
   function bindUIEvents() {
     document.getElementById('btn-fit').addEventListener('click', fitView);
     document.getElementById('btn-player').addEventListener('click', openPlayerView);
+    document.getElementById('btn-pause').addEventListener('click', togglePause);
     document.getElementById('btn-import').addEventListener('click', function () { document.getElementById('file-scenario').click(); });
     document.getElementById('btn-export').addEventListener('click', exportScenario);
     document.getElementById('btn-clear').addEventListener('click', clearScenario);
@@ -2114,6 +2164,13 @@
 
     document.getElementById('btn-save-cp').addEventListener('click', saveCheckpoint);
 
+    // Grid opacity slider
+    var gridOpSlider = document.getElementById('grid-opacity');
+    var gridOpVal    = document.getElementById('grid-opacity-val');
+    gridOpSlider.addEventListener('input', function () {
+      gridOpVal.textContent = gridOpSlider.value + '%';
+    });
+
     // Mobile panel toggles
     (function () {
       var backdrop   = document.getElementById('panel-backdrop');
@@ -2163,6 +2220,7 @@
         updateCursor();
       }
       if (e.key === 'f' || e.key === 'F') fitView();
+      if (e.key === 'q' || e.key === 'Q') togglePause();
       if (e.key === 'm' || e.key === 'M') {
         var mmBtn = document.getElementById('btn-minimap-toggle');
         if (mmBtn) mmBtn.click();

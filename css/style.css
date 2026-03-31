@@ -49,6 +49,10 @@ button:disabled { opacity: 0.35; pointer-events: none; }
 button.active { background: var(--accent); border-color: var(--accent); }
 button.gold   { background: var(--bg-hover); border-color: var(--gold); color: var(--gold); }
 button.gold:hover { background: var(--gold); color: #000; }
+#btn-pause       { border-color: #e94560; color: #e94560; }
+#btn-pause:hover { background: #e94560; color: #fff; }
+#btn-pause.active { background: #e94560; color: #fff; border-color: #e94560; animation: pulse-pause 1.5s infinite; }
+@keyframes pulse-pause { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
 
 /* ── INPUTS ── */
 input[type="number"],
