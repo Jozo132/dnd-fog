@@ -444,22 +444,6 @@
     ctx.fillStyle = '#0d0d1e';
     ctx.fillRect(0, 0, S.world.w, S.world.h);
 
-    // Grid
-    if (document.getElementById('show-grid').checked) {
-      const gs = parseInt(document.getElementById('grid-size').value) || 50;
-      const gOpacity = (parseInt(document.getElementById('grid-opacity').value) || 7) / 100;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,255,' + gOpacity + ')';
-      ctx.lineWidth = 1 / S.vp.zoom;
-      for (let x = 0; x <= S.world.w; x += gs) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, S.world.h); ctx.stroke();
-      }
-      for (let y = 0; y <= S.world.h; y += gs) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(S.world.w, y); ctx.stroke();
-      }
-      ctx.restore();
-    }
-
     // Layers of the active group (bottom → top)
     for (let i = g.layers.length - 1; i >= 0; i--) {
       const l = g.layers[i];
@@ -475,6 +459,22 @@
         ctx.strokeRect(l.x, l.y, l.w * l.sx, l.h * l.sy);
         ctx.setLineDash([]);
         drawCornerHandles(l);
+      }
+      ctx.restore();
+    }
+
+    // Grid (drawn on top of layers so it's visible)
+    if (document.getElementById('show-grid').checked) {
+      const gs = parseInt(document.getElementById('grid-size').value) || 50;
+      const gOpacity = (parseInt(document.getElementById('grid-opacity').value) || 7) / 100;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,' + gOpacity + ')';
+      ctx.lineWidth = 1 / S.vp.zoom;
+      for (let x = 0; x <= S.world.w; x += gs) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, S.world.h); ctx.stroke();
+      }
+      for (let y = 0; y <= S.world.h; y += gs) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(S.world.w, y); ctx.stroke();
       }
       ctx.restore();
     }
